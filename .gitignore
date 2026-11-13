@@ -8,3 +8,8 @@ scratch/
 .idea/
 *.tmp
 Thumbs.db
+
+data/
+*.log
+dist/
+

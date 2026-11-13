@@ -1,5 +1,7 @@
 <?php
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 if (!isset($_SESSION['username']) || $_SESSION['role'] !== 'admin') {
     header("Location: Login1.php");
     exit;
@@ -12,10 +14,7 @@ $isEvChargerMenu = $menu === 'ev_charger';
 $isEvChargerSnMenu = $menu === 'ev_charger_sn';
 
 // ====== KONEKSI ======
-$koneksi = new mysqli("192.168.88.254:3307", "root", "", "test");
-if ($koneksi->connect_errno) {
-    die("Koneksi gagal: " . $koneksi->connect_error);
-}
+require_once __DIR__ . '/db_config.php';
 
 // ====== AJAX SAVE EV SN LOG HANDLER ======
 if (isset($_POST['action']) && $_POST['action'] === 'save_ev_sn_log') {
@@ -44,7 +43,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'download_wo_txt') {
         $safeWo = $koneksi->real_escape_string($downloadWo);
         $res = $koneksi->query("SELECT nomor FROM {$pcbNumberTable} WHERE wo='$safeWo' ORDER BY id ASC");
         if ($res && $res->num_rows > 0) {
-            $filename = preg_replace('/[^a-zA-Z0-9_\-]/', '_', $downloadWo) . '.txt';
+            $filename = preg_replace('/[\\/:*?"<>|]/', '_', $downloadWo) . '.txt';
             header('Content-Type: text/plain; charset=utf-8');
             header('Content-Disposition: attachment; filename="' . $filename . '"');
             while ($row = $res->fetch_assoc()) {
@@ -76,7 +75,8 @@ $koneksi->query(
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_wo (wo),
         INDEX idx_batch_id (batch_id),
-        INDEX idx_batch_printed (batch_id, is_printed)
+        INDEX idx_batch_printed (batch_id, is_printed),
+        UNIQUE KEY uniq_batch_nomor (batch_id, nomor)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
 );
 $koneksi->query(
@@ -184,9 +184,22 @@ if ($evUniqIdxRes && $evUniqIdxRes->num_rows > 0) {
     $koneksi->query("ALTER TABLE `ev_charger_log_print` ADD INDEX idx_batch_id (batch_id)");
 }
 
-function loadEvChargerTypeOptions(mysqli $koneksi, $filePath)
+function loadEvChargerTypeOptions($koneksi, $filePath)
 {
+    $defaultOptions = [
+        "2150156800-Electronic lock board",
+        "2150172180-LED board S (Head)",
+        "2150172190-LED board L (Head)",
+        "2150174700-EMC Filter(DC)",
+        "2150176020-EMC Filter(AC)",
+        "2150511950-LED board(Nozzle)",
+        "2150513770-PLC board",
+        "2150514390-CCU"
+    ];
     $optionsMap = [];
+    foreach ($defaultOptions as $defaultOpt) {
+        $optionsMap[$defaultOpt] = true;
+    }
 
     if (is_file($filePath)) {
         $fileJson = file_get_contents($filePath);
@@ -233,7 +246,7 @@ function saveEvChargerTypeOptions($filePath, array $options)
 $evTypeOptionsFile = __DIR__ . DIRECTORY_SEPARATOR . 'ev_charger_type_options.json';
 $evTypeOptions = loadEvChargerTypeOptions($koneksi, $evTypeOptionsFile);
 
-function loadTypeMeterOptions(mysqli $koneksi, $filePath)
+function loadTypeMeterOptions($koneksi, $filePath)
 {
     $defaultOptions = [
         "HXE310",
@@ -247,6 +260,9 @@ function loadTypeMeterOptions(mysqli $koneksi, $filePath)
     ];
 
     $optionsMap = [];
+    foreach ($defaultOptions as $defaultOpt) {
+        $optionsMap[$defaultOpt] = true;
+    }
 
     if (is_file($filePath)) {
         $fileJson = file_get_contents($filePath);
@@ -841,14 +857,17 @@ $msgUpload = '';
 $lastWoInput = '';
 $lastStartInput = '';
 $lastEndInput = '';
+$lastBatchInput = 1;
 
 if (isset($_POST['upload_range'])) {
     $rawWo = trim((string) ($_POST['wo'] ?? ''));
     $startNumber = trim((string) ($_POST['start_number'] ?? ''));
     $endNumber = trim((string) ($_POST['end_number'] ?? ''));
+    $rawBatchNum = isset($_POST['batch_num']) ? (int) $_POST['batch_num'] : 1;
     $lastWoInput = $rawWo;
     $lastStartInput = $startNumber;
     $lastEndInput = $endNumber;
+    $lastBatchInput = $rawBatchNum;
 
     if ($rawWo === '' || $startNumber === '' || $endNumber === '') {
         $msgUpload = "WO Number, Nomor Awal, dan Nomor Akhir wajib diisi.";
@@ -856,6 +875,8 @@ if (isset($_POST['upload_range'])) {
         $rangeInfo = parseBarcodeRange($startNumber, $endNumber);
         if (!$rangeInfo['success']) {
             $msgUpload = $rangeInfo['error'];
+        } elseif ($isEvChargerMenu && bccomp($rangeInfo['count'], '500') > 0) {
+            $msgUpload = "Untuk EV Charger, jumlah nomor range tidak boleh lebih dari 500 nomor per jenis PCB / batch (Maksimal 500 nomor). Anda memasukkan " . number_format((float) $rangeInfo['count'], 0, ',', '.') . " nomor.";
         } else {
             $prefix = $rangeInfo['prefix'];
             $curr = $rangeInfo['start_num'];
@@ -867,66 +888,146 @@ if (isset($_POST['upload_range'])) {
             $batchValues = [];
             $inserted = 0;
 
-            // Generate and insert in batches of 1000
-            while (bccomp($curr, $end) <= 0) {
-                $numStr = $prefix . str_pad($curr, $padLen, '0', STR_PAD_LEFT);
-                $safeNum = $koneksi->real_escape_string($numStr);
-                $batchValues[] = "('$safeNum', '$safeWo')";
-                $inserted++;
+            // Untuk EV Charger, langsung buat/hubungkan batch sesuai batch_num yang dipilih
+            $targetBatchId = null;
+            $batchNum = $rawBatchNum > 0 ? $rawBatchNum : 1;
+            if ($isEvChargerMenu) {
+                $nama_batch = "Batch $batchNum - $safeWo";
+                $checkBatchRes = $koneksi->query("SELECT id FROM {$pcbBatchTable} WHERE nama_batch='$nama_batch' AND wo='$safeWo' LIMIT 1");
+                if ($checkBatchRes && $checkBatchRes->num_rows > 0) {
+                    $existingBatchRow = $checkBatchRes->fetch_assoc();
+                    $targetBatchId = (int) $existingBatchRow['id'];
+                    // Cek apakah batch ini sudah memiliki nomor barcode sebelumnya
+                    $cntCheck = $koneksi->query("SELECT COUNT(*) AS cnt FROM {$pcbNumberTable} WHERE batch_id=$targetBatchId");
+                    $cntRow = $cntCheck ? $cntCheck->fetch_assoc() : null;
+                    if ($cntRow && (int)$cntRow['cnt'] > 0) {
+                        $jumpUrl = "view.php?menu=" . urlencode($menu) . "&wo=" . urlencode($rawWo) . "&batch_id=" . $targetBatchId;
+                        $msgUpload = "Gagal upload: <strong>" . htmlspecialchars($nama_batch) . "</strong> sudah memiliki <strong>" . number_format($cntRow['cnt']) . " nomor barcode</strong> di database! Silakan pilih nomor Batch berikutnya (misal Batch " . ($batchNum + 1) . ") atau bersihkan data batch sebelumnya di Langkah 2. <a href=\"" . htmlspecialchars($jumpUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 14px; background: #10b981; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128424; Buka Batch Ini</a>";
+                    }
+                } else {
+                    $koneksi->query("INSERT INTO {$pcbBatchTable} (nama_batch, wo) VALUES ('$nama_batch', '$safeWo')");
+                    $targetBatchId = (int) $koneksi->insert_id;
+                }
+            }
 
-                if (count($batchValues) >= 1000) {
-                    $sql = "INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues);
-                    $koneksi->query($sql);
-                    $batchValues = [];
+            if (empty($msgUpload)) {
+                // Generate and insert in batches of 1000
+                while (bccomp($curr, $end) <= 0) {
+                    $numStr = $prefix . str_pad($curr, $padLen, '0', STR_PAD_LEFT);
+                    $safeNum = $koneksi->real_escape_string($numStr);
+                    if ($targetBatchId !== null) {
+                        $batchValues[] = "('$safeNum', '$safeWo', $targetBatchId)";
+                    } else {
+                        $batchValues[] = "('$safeNum', '$safeWo')";
+                    }
+                    $inserted++;
+
+                    if (count($batchValues) >= 1000) {
+                        if ($targetBatchId !== null) {
+                            $sql = "INSERT IGNORE INTO {$pcbNumberTable} (nomor, wo, batch_id) VALUES " . implode(',', $batchValues);
+                        } else {
+                            $sql = "INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues);
+                        }
+                        $koneksi->query($sql);
+                        $batchValues = [];
+                    }
+
+                    $curr = bcadd($curr, '1');
                 }
 
-                $curr = bcadd($curr, '1');
-            }
+                if (!empty($batchValues)) {
+                    if ($targetBatchId !== null) {
+                        $sql = "INSERT IGNORE INTO {$pcbNumberTable} (nomor, wo, batch_id) VALUES " . implode(',', $batchValues);
+                    } else {
+                        $sql = "INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues);
+                    }
+                    $koneksi->query($sql);
+                }
 
-            if (!empty($batchValues)) {
-                $sql = "INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues);
-                $koneksi->query($sql);
+                $downloadUrl = "view.php?menu=" . urlencode($menu) . "&action=download_wo_txt&wo=" . urlencode($rawWo);
+                if ($isEvChargerMenu && $targetBatchId !== null) {
+                    $jumpUrl = "view.php?menu=" . urlencode($menu) . "&wo=" . urlencode($rawWo) . "&batch_id=" . $targetBatchId;
+                    $msgUpload = "Upload range nomor berhasil untuk WO: <strong>" . htmlspecialchars($rawWo) . "</strong> (<strong>Batch {$batchNum}</strong>, " . number_format((float) $totalCount, 0, ',', '.') . " nomor dimasukkan ke database). <a href=\"" . htmlspecialchars($jumpUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 14px; background: #10b981; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128424; Cetak Batch {$batchNum}</a> <a href=\"" . htmlspecialchars($downloadUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 8px; padding: 4px 12px; background: #123968; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128190; Download TXT</a>";
+                } else {
+                    $msgUpload = "Upload range nomor berhasil untuk WO: <strong>" . htmlspecialchars($rawWo) . "</strong> (" . number_format((float) $totalCount, 0, ',', '.') . " nomor dimasukkan ke database). <a href=\"" . htmlspecialchars($downloadUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 12px; background: #123968; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128190; Download TXT</a>";
+                }
             }
-
-            $downloadUrl = "view.php?menu=" . urlencode($menu) . "&action=download_wo_txt&wo=" . urlencode($rawWo);
-            $msgUpload = "Upload range nomor berhasil untuk WO: <strong>" . htmlspecialchars($rawWo) . "</strong> (" . number_format((float) $totalCount, 0, ',', '.') . " nomor dimasukkan ke database). <a href=\"" . htmlspecialchars($downloadUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 12px; background: #123968; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128190; Download TXT</a>";
         }
     }
 } elseif (isset($_POST['upload'])) {
     $wo = $koneksi->real_escape_string(trim($_POST['wo']));
-    $file = $_FILES['file']['tmp_name'] ?? null;
-    if ($file && is_uploaded_file($file)) {
-        $handle = fopen($file, "r");
-        if ($handle) {
-            $batchValues = [];
-            $fileCount = 0;
-            while (($data = fgetcsv($handle, 0, ",")) !== false) {
-                if (!isset($data[0])) {
-                    continue;
-                }
-                $nomor = trim($data[0]);
-                if ($nomor === '') {
-                    continue;
-                }
-                $safeNomor = $koneksi->real_escape_string($nomor);
-                $batchValues[] = "('$safeNomor', '$wo')";
-                $fileCount++;
-                if (count($batchValues) >= 1000) {
-                    $koneksi->query("INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues));
-                    $batchValues = [];
-                }
+    $rawBatchNum = isset($_POST['batch_num']) ? (int) $_POST['batch_num'] : 1;
+    $targetBatchId = null;
+    $batchNum = $rawBatchNum > 0 ? $rawBatchNum : 1;
+    if ($isEvChargerMenu) {
+        $nama_batch = "Batch $batchNum - $wo";
+        $checkBatchRes = $koneksi->query("SELECT id FROM {$pcbBatchTable} WHERE nama_batch='$nama_batch' AND wo='$wo' LIMIT 1");
+        if ($checkBatchRes && $checkBatchRes->num_rows > 0) {
+            $existingBatchRow = $checkBatchRes->fetch_assoc();
+            $targetBatchId = (int) $existingBatchRow['id'];
+            $cntCheck = $koneksi->query("SELECT COUNT(*) AS cnt FROM {$pcbNumberTable} WHERE batch_id=$targetBatchId");
+            $cntRow = $cntCheck ? $cntCheck->fetch_assoc() : null;
+            if ($cntRow && (int)$cntRow['cnt'] > 0) {
+                $jumpUrl = "view.php?menu=" . urlencode($menu) . "&wo=" . urlencode($wo) . "&batch_id=" . $targetBatchId;
+                $msgUpload = "Gagal upload: <strong>" . htmlspecialchars($nama_batch) . "</strong> sudah memiliki <strong>" . number_format($cntRow['cnt']) . " nomor barcode</strong> di database! Pilih nomor Batch berikutnya atau bersihkan data batch di Langkah 2. <a href=\"" . htmlspecialchars($jumpUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 14px; background: #10b981; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128424; Buka Batch Ini</a>";
             }
-            if (!empty($batchValues)) {
-                $koneksi->query("INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues));
-            }
+        } else {
+            $koneksi->query("INSERT INTO {$pcbBatchTable} (nama_batch, wo) VALUES ('$nama_batch', '$wo')");
+            $targetBatchId = (int) $koneksi->insert_id;
+        }
+    }
+    if (empty($msgUpload)) {
+        $file = $_FILES['file']['tmp_name'] ?? null;
+        if ($file && is_uploaded_file($file)) {
+            $handle = fopen($file, "r");
+            if ($handle) {
+                $batchValues = [];
+                $fileCount = 0;
+                while (($data = fgetcsv($handle, 0, ",")) !== false) {
+                    if (!isset($data[0])) {
+                        continue;
+                    }
+                    $nomor = trim($data[0]);
+                    if ($nomor === '') {
+                        continue;
+                    }
+                    $safeNomor = $koneksi->real_escape_string($nomor);
+                    if ($targetBatchId !== null) {
+                        $batchValues[] = "('$safeNomor', '$wo', $targetBatchId)";
+                    } else {
+                        $batchValues[] = "('$safeNomor', '$wo')";
+                    }
+                    $fileCount++;
+                    if (count($batchValues) >= 1000) {
+                        if ($targetBatchId !== null) {
+                            $koneksi->query("INSERT IGNORE INTO {$pcbNumberTable} (nomor, wo, batch_id) VALUES " . implode(',', $batchValues));
+                        } else {
+                            $koneksi->query("INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues));
+                        }
+                        $batchValues = [];
+                    }
+                }
+                if (!empty($batchValues)) {
+                    if ($targetBatchId !== null) {
+                        $koneksi->query("INSERT IGNORE INTO {$pcbNumberTable} (nomor, wo, batch_id) VALUES " . implode(',', $batchValues));
+                    } else {
+                        $koneksi->query("INSERT INTO {$pcbNumberTable} (nomor, wo) VALUES " . implode(',', $batchValues));
+                    }
+                }
             fclose($handle);
             $downloadUrl = "view.php?menu=" . urlencode($menu) . "&action=download_wo_txt&wo=" . urlencode(trim($_POST['wo']));
-            $msgUpload = "Upload file berhasil untuk WO: <strong>" . htmlspecialchars(trim($_POST['wo'])) . "</strong> (" . number_format($fileCount, 0, ',', '.') . " nomor). <a href=\"" . htmlspecialchars($downloadUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 12px; background: #123968; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128190; Download TXT</a>";
+            if ($isEvChargerMenu && $targetBatchId !== null) {
+                $jumpUrl = "view.php?menu=" . urlencode($menu) . "&wo=" . urlencode(trim($_POST['wo'])) . "&batch_id=" . $targetBatchId;
+                $msgUpload = "Upload file berhasil untuk WO: <strong>" . htmlspecialchars(trim($_POST['wo'])) . "</strong> (<strong>Batch {$batchNum}</strong>, " . number_format($fileCount, 0, ',', '.') . " nomor). <a href=\"" . htmlspecialchars($jumpUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 14px; background: #10b981; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128424; Cetak Batch {$batchNum}</a> <a href=\"" . htmlspecialchars($downloadUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 8px; padding: 4px 12px; background: #123968; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128190; Download TXT</a>";
+            } else {
+                $msgUpload = "Upload file berhasil untuk WO: <strong>" . htmlspecialchars(trim($_POST['wo'])) . "</strong> (" . number_format($fileCount, 0, ',', '.') . " nomor). <a href=\"" . htmlspecialchars($downloadUrl) . "\" class=\"btn-download-link\" style=\"display: inline-block; margin-left: 10px; padding: 4px 12px; background: #123968; color: #fff; border-radius: 999px; text-decoration: none; font-size: 12px; font-weight: bold;\">&#128190; Download TXT</a>";
+            }
         } else {
             $msgUpload = "Gagal membuka file upload.";
         }
     } else {
         $msgUpload = "File tidak terdeteksi.";
+    }
     }
 }
 
@@ -1856,7 +1957,37 @@ if ($recordType === 'nameplate') {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PCB Barcode Print</title>
+  <title>PCB Barcode Print Generator</title>
+  <link rel="stylesheet" href="CSS/app-print-modal.css?v=<?= file_exists(__DIR__ . '/CSS/app-print-modal.css') ? filemtime(__DIR__ . '/CSS/app-print-modal.css') : time() ?>">
+  <link rel="stylesheet" href="CSS/studio-ui.css?v=<?= file_exists(__DIR__ . '/CSS/studio-ui.css') ? filemtime(__DIR__ . '/CSS/studio-ui.css') : time() ?>">
+  <script src="JS2/app-print-modal.js?v=<?= file_exists(__DIR__ . '/JS2/app-print-modal.js') ? filemtime(__DIR__ . '/JS2/app-print-modal.js') : time() ?>"></script>
+  <script src="JS2/studio-ui.js?v=<?= file_exists(__DIR__ . '/JS2/studio-ui.js') ? filemtime(__DIR__ . '/JS2/studio-ui.js') : time() ?>"></script>
+  <style>
+    .mode-badge-wrap {
+      padding: 7px 10px;
+      margin: 4px 10px 12px 10px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .mode-badge-wrap.online {
+      background: rgba(34, 197, 94, 0.12);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+      color: #4ade80;
+    }
+    .mode-switch-link {
+      color: #94a3b8;
+      text-decoration: underline;
+      font-size: 10.5px;
+      cursor: pointer;
+    }
+    .mode-switch-link:hover {
+      color: #ffffff;
+    }
+  </style>
   <link rel="icon" type="image/png" sizes="32x32" href="IMG/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="IMG/favicon-16x16.png">
   <link rel="shortcut icon" href="IMG/favicon.ico">
@@ -2073,13 +2204,31 @@ if ($recordType === 'nameplate') {
     }
 
     .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+      overflow-x: hidden;
       background: var(--sidebar);
       border-right: 1px solid var(--line);
       padding: 24px 16px;
       display: flex;
       flex-direction: column;
       gap: 18px;
-      overflow: hidden;
+      z-index: 100;
+      scrollbar-width: thin;
+      scrollbar-color: var(--line-strong) transparent;
+    }
+
+    .sidebar::-webkit-scrollbar {
+      width: 6px;
+    }
+    .sidebar::-webkit-scrollbar-thumb {
+      background: var(--line-strong);
+      border-radius: 4px;
+    }
+    .sidebar::-webkit-scrollbar-track {
+      background: transparent;
     }
 
     .sidebar-header {
@@ -3541,6 +3690,9 @@ if ($recordType === 'nameplate') {
       }
 
       .sidebar {
+        position: static;
+        height: auto;
+        overflow-y: visible;
         border-right: none;
         border-bottom: 1px solid var(--line);
       }
@@ -3596,160 +3748,439 @@ if ($recordType === 'nameplate') {
   </style>
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="sidebar-header">
-        <div class="brand">
-          <img class="brand-text brand-logo" src="IMG/sidebar-logo.svg" alt="Barcode Print Generator Logo">
-          <span class="brand-mini" aria-hidden="true">
-            <img src="IMG/sidebar-logo-mini.svg" alt="">
-          </span>
+  <header class="studio-header">
+    <!-- Row 1: Brand & Printer status -->
+    <div class="studio-header-top">
+      <a href="view.php?menu=pcb" class="studio-brand">
+        <div class="studio-brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="4" y1="5" x2="4" y2="19"></line><line x1="7" y1="5" x2="7" y2="19"></line><line x1="9" y1="5" x2="9" y2="19"></line><line x1="13" y1="5" x2="13" y2="19"></line><line x1="15" y1="5" x2="15" y2="19"></line><line x1="17" y1="5" x2="17" y2="19"></line><line x1="20" y1="5" x2="20" y2="19"></line></svg>
+          <span style="margin-left: 2px;">PCB</span>
         </div>
-        <button type="button" class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle Sidebar" aria-expanded="true">&#9776;</button>
+        <span class="studio-brand-title">PCB Barcode Print <span class="studio-brand-version">v2.4</span></span>
+      </a>
+
+      <!-- Header Right: Printer status & Theme Toggle -->
+      <div class="studio-header-right">
+        <div id="headerPrinterStatusBox" class="studio-printer-status-bar" title="Klik untuk Buka Pengaturan Printer">
+          <div id="headerPrinterDot" class="studio-printer-dot"></div>
+          <span id="headerPrinterStatusText">Printer: Zebra ZD420 (Ready) | Port: USB001</span>
+        </div>
+        <button type="button" id="themeToggleBtn" class="studio-theme-toggle" aria-label="Toggle Theme">
+          <span id="themeToggleIcon">&#9728;&#65039;</span>
+          <span id="themeToggleText">Light Mode</span>
+        </button>
       </div>
+    </div>
 
-	      <nav>
-	        <a class="nav-link <?= $menu === 'pcb' ? 'active' : '' ?>" href="view.php?menu=pcb">
-	          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="3" width="7" height="7" rx="1.5"></rect><rect x="14" y="14" width="7" height="7" rx="1.5"></rect><rect x="3" y="14" width="7" height="7" rx="1.5"></rect></svg>
-	          <span class="nav-link-text">Print PCB Barcode</span>
-	        </a>
-	        <div class="nav-dropdown <?= ($menu === 'ev_charger' || $menu === 'ev_charger_sn') ? 'open' : '' ?>">
-	          <button type="button" class="nav-dropdown-toggle">
-	            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-	            <span class="nav-link-text">EV Charge</span>
-	            <svg class="nav-dropdown-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
-	          </button>
-	          <div class="nav-dropdown-menu">
-	            <a class="nav-sub-link <?= $menu === 'ev_charger' ? 'active' : '' ?>" href="view.php?menu=ev_charger">
-	              <svg class="nav-icon sub-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><line x1="9" y1="1" x2="9" y2="4"></line><line x1="15" y1="1" x2="15" y2="4"></line><line x1="9" y1="20" x2="9" y2="23"></line><line x1="15" y1="20" x2="15" y2="23"></line><line x1="20" y1="9" x2="23" y2="9"></line><line x1="20" y1="14" x2="23" y2="14"></line><line x1="1" y1="9" x2="4" y2="9"></line><line x1="1" y1="14" x2="4" y2="14"></line></svg>
-	              <span class="nav-link-text">Print PCB EV Charge</span>
-	            </a>
-	            <a class="nav-sub-link <?= $menu === 'ev_charger_sn' ? 'active' : '' ?>" href="view.php?menu=ev_charger_sn">
-	              <svg class="nav-icon sub-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"></rect><rect x="15" y="3" width="6" height="6" rx="1"></rect><rect x="3" y="15" width="6" height="6" rx="1"></rect><path d="M14 14h3v3h-3z"></path><path d="M20 14v6h-6"></path><path d="M17 17v3"></path></svg>
-	              <span class="nav-link-text">Print SN EV Charge</span>
-	            </a>
-	          </div>
-	        </div>
-	        <a class="nav-link <?= $menu === 'nameplate' ? 'active' : '' ?>" href="view.php?menu=nameplate">
-	          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line></svg>
-	          <span class="nav-link-text">Print Nameplate Barcode</span>
-	        </a>
-	        <a class="nav-link <?= $menu === 'record' ? 'active' : '' ?>" href="view.php?menu=record">
-	          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-	          <span class="nav-link-text">Record Print</span>
-	        </a>
-	        <a class="nav-link <?= $menu === 'custom' ? 'active' : '' ?>" href="view.php?menu=custom">
-	          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>
-	          <span class="nav-link-text">Custom Print</span>
-	        </a>
-	        <a class="nav-link <?= $menu === 'setting' ? 'active' : '' ?>" href="view.php?menu=setting">
-	          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-	          <span class="nav-link-text">Setting</span>
-	        </a>
-	        <div class="nav-divider"></div>
-	        <a class="logout-link" href="Logout1.php">
-	          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-	          <span>Logout</span>
-	        </a>
-	      </nav>
-    </aside>
+    <!-- Row 2: Horizontal Navigation Tabs Bar (Full Width Row) -->
+    <div class="studio-nav-bar">
+      <a class="studio-nav-tab <?= ($menu === 'pcb') ? 'active' : '' ?>" href="view.php?menu=pcb">Print PCB Barcode</a>
+      <a class="studio-nav-tab <?= ($menu === 'ev_charger' || $menu === 'ev_charger_sn') ? 'active' : '' ?>" href="view.php?menu=ev_charger">EV Charge</a>
+      <a class="studio-nav-tab <?= ($menu === 'nameplate') ? 'active' : '' ?>" href="view.php?menu=nameplate">Print Nameplate</a>
+      <a class="studio-nav-tab <?= ($menu === 'record') ? 'active' : '' ?>" href="view.php?menu=record">Record Print</a>
+      <a class="studio-nav-tab <?= ($menu === 'custom') ? 'active' : '' ?>" href="view.php?menu=custom">Custom Print</a>
+      <a class="studio-nav-tab" href="db_setup.php">Database</a>
+      <a class="studio-nav-tab <?= ($menu === 'setting') ? 'active' : '' ?>" href="view.php?menu=setting">Setting</a>
+      <a class="studio-nav-tab studio-logout-tab" href="Logout1.php">Logout</a>
+    </div>
 
-    <main class="main-content">
-      <button type="button" id="themeToggleBtn" class="theme-toggle" aria-label="Toggle Theme">&#9728;&#65039; Light Mode</button>
-	      <?php if ($menu === 'pcb' || $menu === 'ev_charger'): ?>
-	        <div class="topbar">
-	          <h1><?= $isEvChargerMenu ? 'Print PCB EV Chager' : 'Print PCB Barcode' ?></h1>
-	          <p><?= $isEvChargerMenu ? 'Halaman admin untuk upload, split, preview, dan print barcode PCB EV Chager.' : 'Halaman utama setelah login untuk upload, split, preview, dan print barcode PCB.' ?></p>
-	        </div>
+    <!-- Row 3: Subbar for Light Mode (Reference Image 2) -->
+    <div class="studio-subbar" style="display: none;">
+      <div class="studio-subbar-left">
+        <div id="headerPrinterSubDot" class="studio-printer-dot"></div>
+        <span id="headerPrinterSubText">● Printer: Zebra ZD420 | Status: Connected | Port: USB001</span>
+      </div>
+      <div>
+        <span style="color: #64748b; font-size: 12px; font-weight: 500;">Admin Mode</span>
+      </div>
+    </div>
+  </header>
+  <div class="app-shell studio-app-shell">
+    <main class="main-content studio-main-wrap">
+<?php if ($menu === 'pcb' || $menu === 'ev_charger'): ?>
+        <?php
+          // Prepare display data for Preview grid
+          $displayList = [];
+          if (!empty($numbers)) {
+              $displayList = $numbers;
+          } elseif (!empty($unprintedNumbers)) {
+              $displayList = $unprintedNumbers;
+          } elseif (!empty($allNumbers)) {
+              $displayList = $allNumbers;
+          }
+          $totalDisplayLabels = count($displayList);
+          $displayWo = !empty($woBatch) ? $woBatch : ($selectedWO ?? '');
+        ?>
 
-        <div class="card">
-          <div class="step-title">
-            <span class="icon">1</span>
-            Input Range Nomor WO
-            <span class="required">Required</span>
+        <div class="studio-grid-layout">
+          <!-- LEFT COLUMN: Card 1 (Input Range) & Card 2 (Split & Batch Selection) -->
+          <div class="studio-col-left">
+
+            <!-- CARD [1]: INPUT RANGE NOMOR WO -->
+            <div class="studio-card">
+              <div class="studio-card-title">
+                <span>[1] INPUT RANGE NOMOR WO</span>
+              </div>
+
+              <!-- Mode Input Range -->
+              <div id="rangeInputMode">
+                <form method="POST" id="rangeForm">
+                  <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
+
+                  <?php if ($isEvChargerMenu): ?>
+                    <div class="studio-form-group">
+                      <label class="studio-label" for="rangeWo">WO Number (Jenis PCB EV)</label>
+                      <select id="rangeWo" name="wo" class="studio-select" required>
+                        <option value="">-- Pilih WO Number EV Charge --</option>
+                        <?php foreach ($evTypeOptions as $evOpt): ?>
+                          <option value="<?= htmlspecialchars($evOpt) ?>" <?= ($lastWoInput ?? '') === $evOpt ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($evOpt) ?>
+                          </option>
+                        <?php endforeach; ?>
+                      </select>
+                    </div>
+                    <div class="studio-form-group">
+                      <label class="studio-label" for="rangeBatch">Batch</label>
+                      <select id="rangeBatch" name="batch_num" class="studio-select" required>
+                        <option value="">-- Pilih Batch --</option>
+                        <?php for ($b = 1; $b <= 50; $b++): ?>
+                          <option value="<?= $b ?>" <?= ((int)($lastBatchInput ?? 1) === $b) ? 'selected' : '' ?>>
+                            Batch <?= $b ?>
+                          </option>
+                        <?php endfor; ?>
+                      </select>
+                    </div>
+                  <?php else: ?>
+                    <div class="studio-form-group">
+                      <label class="studio-label" for="rangeWo">WO Number</label>
+                      <input type="text" id="rangeWo" name="wo" class="studio-input" placeholder="WO Number" required value="<?= htmlspecialchars($lastWoInput ?? '') ?>">
+                    </div>
+                  <?php endif; ?>
+
+                  <div class="studio-row-2col">
+                    <div class="studio-form-group">
+                      <label class="studio-label" for="rangeStartNumber">Nomor Awal</label>
+                      <input type="text" id="rangeStartNumber" name="start_number" class="studio-input" placeholder="Nomor Awal" required value="<?= htmlspecialchars($lastStartInput ?? '') ?>">
+                    </div>
+                    <div class="studio-form-group">
+                      <label class="studio-label" for="rangeEndNumber">Nomor Akhir</label>
+                      <input type="text" id="rangeEndNumber" name="end_number" class="studio-input" placeholder="Nomor Akhir" required value="<?= htmlspecialchars($lastEndInput ?? '') ?>">
+                    </div>
+                  </div>
+
+                  <!-- Action Buttons: Count, Quantity, Upload CSV/TXT, Download TXT -->
+                  <div class="studio-btn-row-4">
+                    <button type="button" id="btnCountRange" class="studio-btn">Count</button>
+                    <button type="button" id="btnQuantityRange" class="studio-btn" title="Quantity Hasil Hitung">
+                      <span id="rangeCountText">Quantity</span>
+                    </button>
+                    <button type="submit" name="upload_range" id="btnUploadRange" class="studio-btn" title="Simpan Range ke Database">
+                      Upload CSV/TXT
+                    </button>
+                    <button type="button" id="btnDownloadTxt" class="studio-btn">Download TXT</button>
+                  </div>
+
+                  <!-- Hidden legacy badge for backwards compatibility -->
+                  <div id="rangeCountResult" style="display: none;">
+                    <span id="rangeCountValue">-</span>
+                  </div>
+
+                  <div id="rangeErrorMsg" style="display: none; margin-top: 10px; padding: 8px 12px; border-radius: 6px; font-size: 12px; color: #dc2626; background: rgba(220, 38, 38, 0.12); border: 1px solid rgba(220, 38, 38, 0.25);"></div>
+
+                  <div style="margin-top: 10px; font-size: 11px; color: var(--studio-text-muted);">
+                    <a href="javascript:void(0)" id="toggleToUploadFile" style="color: inherit; text-decoration: underline;">
+                      Atau upload file manual (.csv/.txt)
+                    </a>
+                  </div>
+                </form>
+              </div>
+
+              <!-- Mode Upload File Manual -->
+              <div id="fileUploadMode" style="display: none; margin-top: 10px;">
+                <form method="POST" enctype="multipart/form-data">
+                  <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
+                  <div class="studio-form-group">
+                    <label class="studio-label">Upload File (.csv / .txt)</label>
+                    <input type="file" name="file" class="studio-input" required style="padding: 6px;">
+                  </div>
+                  <div style="display: flex; gap: 8px; align-items: center; margin-top: 8px;">
+                    <button type="submit" name="upload" class="studio-btn" style="background: var(--studio-primary); color: #fff;">Upload File</button>
+                    <a href="javascript:void(0)" id="toggleToRangeInput" style="font-size: 11px; color: var(--studio-text-muted); text-decoration: underline;">
+                      &larr; Kembali ke Range
+                    </a>
+                  </div>
+                </form>
+              </div>
+
+              <?php if (!empty($msgUpload)): ?>
+                <div class="status-msg" style="margin-top: 10px; font-size: 12px;"><?= $msgUpload ?></div>
+              <?php endif; ?>
+            </div>
+
+            <!-- CARD [2]: SPLIT & BATCH SELECTION -->
+            <div class="studio-card">
+              <div class="studio-card-title">
+                <span>[2] SPLIT & BATCH SELECTION</span>
+              </div>
+
+              <!-- Row 1: Select Work Order + Split + Finish -->
+              <form method="POST" id="splitForm">
+                <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
+                <div class="studio-form-group">
+                  <div class="studio-split-row">
+                    <select id="studioWoSelect" name="wo_selected" class="studio-select" required>
+                      <option value="">Select Work Order</option>
+                      <?php
+                      $woRes = $koneksi->query("SELECT wo, COUNT(*) jml FROM {$pcbNumberTable} WHERE wo IS NOT NULL GROUP BY wo ORDER BY wo");
+                      while ($w = $woRes->fetch_assoc()) {
+                          $woVal = htmlspecialchars($w['wo']);
+                          $selWo = ($selectedWO === $w['wo']) ? 'selected' : '';
+                          echo "<option value='{$woVal}' {$selWo}>{$woVal} ({$w['jml']})</option>";
+                      }
+                      ?>
+                    </select>
+                    <?php if (!$isEvChargerMenu): ?>
+                      <button type="submit" name="split" class="studio-btn studio-btn-split">Split</button>
+                    <?php endif; ?>
+                    <button type="submit" name="finish" class="studio-btn studio-btn-finish" onclick="return confirm('Yakin hapus seluruh data WO ini?')">
+                      <?= $isEvChargerMenu ? 'Hapus' : 'Finish' ?>
+                    </button>
+                  </div>
+                </div>
+
+                <?php if (!empty($msgSplit)): ?>
+                  <p class="status-msg" style="font-size: 12px; margin-top: 6px;"><?= htmlspecialchars($msgSplit) ?></p>
+                <?php endif; ?>
+                <?php if (!empty($msgFinish)): ?>
+                  <p class="status-msg" style="font-size: 12px; margin-top: 6px;"><?= htmlspecialchars($msgFinish) ?></p>
+                <?php endif; ?>
+              </form>
+
+              <!-- Row 2: Select Batch -->
+              <div class="studio-form-group" style="margin-top: 12px; margin-bottom: 0;">
+                <label class="studio-label">Select Batch</label>
+                <select id="studioBatchSelect" name="batch_id" class="studio-select" <?= empty($selectedWO) ? 'disabled' : '' ?>>
+                  <option value=""><?= empty($selectedWO) ? 'Select Batch' : '-- Select Batch --' ?></option>
+                  <?php
+                  if (!empty($selectedWO)) {
+                      $batchQuery = "SELECT * FROM {$pcbBatchTable} WHERE wo='" . mysqli_real_escape_string($koneksi, $selectedWO) . "' ORDER BY id ASC";
+                      $batchList = mysqli_query($koneksi, $batchQuery);
+                      while ($batch = mysqli_fetch_assoc($batchList)) {
+                          $id = (int) $batch['id'];
+                          $sel = ($selectedBatchId == $id) ? 'selected' : '';
+                          $label = htmlspecialchars($batch['nama_batch']);
+
+                          if ($isEvChargerMenu) {
+                              $statRes = $koneksi->query("SELECT COUNT(*) AS total_cnt, SUM(CASE WHEN is_printed = 1 THEN 1 ELSE 0 END) AS printed_cnt, SUM(CASE WHEN is_printed = 0 THEN 1 ELSE 0 END) AS unprinted_cnt FROM ev_charger_nomor_barcode WHERE batch_id=$id");
+                              $statRow = $statRes ? $statRes->fetch_assoc() : null;
+                              $tCnt = (int) ($statRow['total_cnt'] ?? 0);
+                              $pCnt = (int) ($statRow['printed_cnt'] ?? 0);
+                              $uCnt = (int) ($statRow['unprinted_cnt'] ?? 0);
+                              if ($tCnt > 0 && $uCnt === 0) {
+                                  $label .= ' (Selesai)';
+                              } elseif ($pCnt > 0) {
+                                  $label .= " (Sisa {$uCnt}/{$tCnt})";
+                              } else {
+                                  $label .= " ({$tCnt} nomor)";
+                              }
+                          } else {
+                              $checkBatchPrint = $koneksi->query("SELECT COUNT(*) as cnt FROM {$pcbPrintLogTable} WHERE batch_id=$id");
+                              $batchPrintRow = $checkBatchPrint ? $checkBatchPrint->fetch_assoc() : null;
+                              if ($batchPrintRow && $batchPrintRow['cnt'] > 0) {
+                                  $label .= ' (Sudah Print)';
+                              }
+                          }
+                          echo "<option value='{$id}' {$sel}>{$label}</option>";
+                      }
+                  }
+                  ?>
+                </select>
+              </div>
+
+              <?php if (!empty($selectedWO)): ?>
+                <div style="margin-top: 10px; display: flex; justify-content: flex-end;">
+                  <button type="button" onclick="openExcelExportModal('<?= $isEvChargerMenu ? 'ev_charger' : 'pcb' ?>', '<?= htmlspecialchars($selectedWO) ?>')" style="font-size: 11px; background: transparent; border: 1px solid var(--studio-card-border); color: var(--studio-text-muted); border-radius: 4px; padding: 4px 8px; cursor: pointer;">
+                    &#128196; Download Excel WO
+                  </button>
+                </div>
+              <?php endif; ?>
+            </div>
+
           </div>
 
-          <!-- Mode 1: Input Range Nomor (Utama) -->
-          <div id="rangeInputMode">
-            <form method="POST" id="rangeForm">
-              <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
-              
-              <label for="rangeWo">WO Number</label>
-              <input type="text" id="rangeWo" name="wo" placeholder="Enter work order number" required value="<?= htmlspecialchars($lastWoInput ?? '') ?>">
-
-              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-bottom: 12px;">
-                <div>
-                  <label for="rangeStartNumber">Nomor Awal (Start Number)</label>
-                  <input type="text" id="rangeStartNumber" name="start_number" placeholder="Contoh: 6003156549 atau HXE0001" required value="<?= htmlspecialchars($lastStartInput ?? '') ?>" style="margin-bottom: 0;">
-                </div>
-                <div>
-                  <label for="rangeEndNumber">Nomor Akhir (End Number)</label>
-                  <input type="text" id="rangeEndNumber" name="end_number" placeholder="Contoh: 6003157548 atau HXE1000" required value="<?= htmlspecialchars($lastEndInput ?? '') ?>" style="margin-bottom: 0;">
+          <!-- RIGHT COLUMN: PREVIEW BARCODE CANVAS & ACTIONS -->
+          <div class="studio-col-right">
+            <div class="studio-card studio-preview-card">
+              <div class="studio-preview-header">
+                <div class="studio-preview-title">PREVIEW BARCODE</div>
+                <div class="studio-preview-total" id="studioPreviewTotalText">
+                  Total: <?= $totalDisplayLabels > 0 ? $totalDisplayLabels : 999 ?> Labels (Ready)
                 </div>
               </div>
 
-              <!-- Baris Aksi: Count, Display Quantity, Upload, Download TXT -->
-              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px;">
-                <button type="button" id="btnCountRange" style="height: 42px; padding: 0 18px; border-radius: 999px; background: var(--content-panel-soft); color: var(--content-text); border: 1px solid var(--content-line-strong); font-weight: 600; cursor: pointer;">
-                  Count
-                </button>
+              <!-- Scrollable Canvas -->
+              <div class="studio-preview-canvas" id="studioPreviewCanvas">
+                <?php if ($totalDisplayLabels > 0): ?>
+                  <div class="studio-barcode-grid" id="studioBarcodeGrid">
+                    <?php foreach ($displayList as $idx => $num): ?>
+                      <div class="studio-label-card">
+                        <div class="studio-label-top-text">PCB BARCODE</div>
+                        <div class="studio-label-svg-wrap">
+                          <svg id="studio_bc_<?= $idx ?>"></svg>
+                        </div>
+                        <div class="studio-label-num studio-label-meter-type"><?= htmlspecialchars($displayWo ?: '123309451001') ?></div>
+                        <div class="studio-label-code"><?= htmlspecialchars($num) ?></div>
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                <?php else: ?>
+                  <!-- Default Reference Preview (Matches UI Screenshots 1 & 2 before batch is loaded) -->
+                  <div class="studio-barcode-grid" id="studioBarcodeGrid">
+                    <?php
+                    $sampleCards = [
+                        ['wo' => '123309451001', 'sn' => 'HXE0001'],
+                        ['wo' => '123307880047', 'sn' => 'HXE0002'],
+                        ['wo' => '123007883059', 'sn' => 'HXE0003'],
+                        ['wo' => '123307883080', 'sn' => 'HXE0004'],
+                        ['wo' => '123309451001', 'sn' => 'HXE0004'],
+                        ['wo' => '123307882052', 'sn' => 'HXE0005'],
+                        ['wo' => '123307883053', 'sn' => 'HXE0006'],
+                        ['wo' => '123307883084', 'sn' => 'HXE0007'],
+                        ['wo' => '123309451003', 'sn' => 'HXE0006'],
+                        ['wo' => '123307883008', 'sn' => 'HXE0007'],
+                        ['wo' => '123307883079', 'sn' => 'HXE0008'],
+                        ['wo' => '123303883000', 'sn' => 'HXE0009'],
+                    ];
+                    foreach ($sampleCards as $idx => $sCard):
+                    ?>
+                      <div class="studio-label-card">
+                        <div class="studio-label-top-text">PCB BARCODE</div>
+                        <div class="studio-label-svg-wrap">
+                          <svg id="studio_sample_bc_<?= $idx ?>"></svg>
+                        </div>
+                        <div class="studio-label-num studio-label-meter-type"><?= $sCard['wo'] ?></div>
+                        <div class="studio-label-code"><?= $sCard['sn'] ?></div>
+                      </div>
+                    <?php endforeach; ?>
+                  </div>
+                <?php endif; ?>
+              </div>
 
-                <div id="rangeCountResult" style="height: 42px; display: inline-flex; align-items: center; padding: 0 16px; border-radius: 999px; background: var(--content-panel-soft); border: 1px dashed var(--content-line-strong); font-size: 13px; color: var(--content-text);">
-                  Quantity:&nbsp;<strong id="rangeCountValue" style="color: var(--content-button-hover); font-size: 15px;">-</strong>&nbsp;nomor
+              <!-- Form Print & Custom Text Section -->
+              <form id="printForm" method="POST" data-is-printed="<?= !empty($isPrinted) ? '1' : '0' ?>" data-is-ev="<?= $isEvChargerMenu ? '1' : '0' ?>" style="margin-top: 12px;">
+                <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
+                <input type="hidden" name="batch_id" value="<?= (int)($selectedBatchId ?? 0) ?>">
+                <input type="hidden" name="wo" value="<?= htmlspecialchars($woBatch ?? '') ?>">
+                <input type="hidden" name="start" value="<?= htmlspecialchars($start ?? '') ?>">
+                <input type="hidden" name="end" value="<?= htmlspecialchars($end ?? '') ?>">
+                <input type="hidden" name="<?= $isEvChargerMenu ? 'print_ev_charger' : 'print' ?>" value="1">
+                <input type="hidden" name="record_batch" id="recordBatchChoice" value="0">
+
+                <?php if ($isEvChargerMenu && $selectedBatchId): ?>
+                  <!-- Custom Range for EV Charger -->
+                  <div style="margin-bottom: 12px; padding: 10px 14px; border-radius: 6px; background: var(--studio-inner-bg); border: 1px solid var(--studio-inner-border);">
+                    <label style="font-weight: 600; font-size: 12.5px; margin-bottom: 6px; display: block; color: var(--studio-text);">Custom Range Print EV Charger</label>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;">
+                      <div>
+                        <label class="studio-label" style="font-size: 11px;">Nomor Awal Print</label>
+                        <input type="text" name="ev_start_number" id="evStartNumber" class="studio-input" value="<?= htmlspecialchars($defaultEvStart ?? '') ?>" required>
+                      </div>
+                      <div>
+                        <label class="studio-label" style="font-size: 11px;">Nomor Akhir Print</label>
+                        <input type="text" name="ev_end_number" id="evEndNumber" class="studio-input" value="<?= htmlspecialchars($defaultEvEnd ?? '') ?>" required>
+                      </div>
+                      <div>
+                        <label class="studio-label" style="font-size: 11px;">Quantity</label>
+                        <input type="number" name="ev_print_qty" id="evPrintQty" class="studio-input" min="1" max="<?= max(1, $totalBatchCount ?? 1) ?>" value="<?= $defaultEvQty ?? 1 ?>" required>
+                      </div>
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
+                      <div style="font-size: 11px; color: var(--studio-text-muted);">
+                        Estimasi: <strong id="evSheetsEstimate" style="color: var(--studio-accent-cyan);"><?= (int) ceil(($defaultEvQty ?? 1) / 9) ?> Lembar</strong> (9 barcode/lembar)
+                      </div>
+                      <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                        <?php if (!empty($unprintedCount) && $unprintedCount > 0): ?>
+                          <button type="button" id="btnEvQuickAll" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">Cetak Sisa (<?= $unprintedCount ?>)</button>
+                        <?php endif; ?>
+                        <button type="button" id="btnEvQuickFullBatch" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">Semua (<?= $totalBatchCount ?? 0 ?>)</button>
+                        <button type="button" id="btnEvQuick12" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">12 Pcs</button>
+                        <button type="button" id="btnEvQuick9" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">1 Lembar (9)</button>
+                        <button type="button" id="btnEvQuick18" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">2 Lembar (18)</button>
+                      </div>
+                    </div>
+                  </div>
+                <?php endif; ?>
+
+                <!-- Custom Text Selection Row (Type Meter & Date) -->
+                <div class="studio-custom-text-box">
+                  <label class="studio-label" for="typeMeterSelect" style="font-weight: 600; font-size: 12.5px; margin-bottom: 6px; color: var(--studio-text);">Custom Text</label>
+                  <div class="studio-custom-text-row">
+                    <?php if ($isEvChargerMenu): ?>
+                      <select id="evTypeNameSelect" name="ev_type_name" class="studio-select" required>
+                        <option value=""><?= empty($evTypeOptions) ? 'Belum ada custom text EV' : 'Pilih Custom Text EV' ?></option>
+                        <?php foreach ($evTypeOptions as $evTypeOption): ?>
+                          <option value="<?= htmlspecialchars($evTypeOption) ?>" <?= (isset($woBatch) && $woBatch === $evTypeOption) ? 'selected' : '' ?>>
+                            <?= htmlspecialchars($evTypeOption) ?>
+                          </option>
+                        <?php endforeach; ?>
+                      </select>
+                    <?php else: ?>
+                      <select id="typeMeterSelect" name="type_meter" class="studio-select" required>
+                        <option value=""><?= empty($typeMeterOptions) ? 'Belum ada Type Meter' : 'Pilih Type Meter' ?></option>
+                        <?php foreach ($typeMeterOptions as $typeMeterOption): ?>
+                          <option value="<?= htmlspecialchars($typeMeterOption) ?>">
+                            <?= htmlspecialchars($typeMeterOption) ?>
+                          </option>
+                        <?php endforeach; ?>
+                      </select>
+                    <?php endif; ?>
+                    <input type="date" id="printDateInput" name="date" class="studio-input" value="<?= date('Y-m-d') ?>" required>
+                  </div>
                 </div>
 
-                <button type="submit" name="upload_range" id="btnUploadRange" class="primary" style="height: 42px; padding: 0 22px;">
-                  Upload
-                </button>
+                <!-- Bottom Actions Bar -->
+                <div class="studio-preview-actions">
+                  <button type="submit" id="btnStudioPrintNow" class="studio-btn-execute" <?= empty($selectedBatchId) ? 'title="Pilih Batch Terlebih Dahulu"' : '' ?>>
+                    CETAK SEKARANG [Enter]
+                  </button>
+                  <button type="button" id="btnStudioCancel" class="studio-btn-action">
+                    Batal
+                  </button>
+                  <button type="button" id="btnStudioPrinterSettings" class="studio-btn-action">
+                    Pengaturan Printer [F12]
+                  </button>
+                </div>
 
-                <button type="button" id="btnDownloadTxt" style="height: 42px; padding: 0 18px; border-radius: 999px; background: var(--content-panel-soft); color: var(--content-text); border: 1px solid var(--content-line-strong); font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
-                  &#128190; Download TXT
-                </button>
-              </div>
-
-              <div id="rangeErrorMsg" style="display: none; margin-top: 10px; padding: 8px 12px; border-radius: 10px; font-size: 13px; color: #dc2626; background: rgba(220, 38, 38, 0.08); border: 1px solid rgba(220, 38, 38, 0.2);"></div>
-
-              <div style="margin-top: 14px; font-size: 12px; color: var(--content-muted);">
-                <a href="javascript:void(0)" id="toggleToUploadFile" style="color: inherit; text-decoration: underline;">
-                  Atau beralih ke upload file CSV/TXT manual
-                </a>
-              </div>
-            </form>
+                <!-- Hidden trigger button for JS -->
+                <button type="button" id="printBtn" style="display: none;">Print</button>
+              </form>
+            </div>
           </div>
-
-          <!-- Mode 2: Upload File Manual (Fallback Checkpoint) -->
-          <div id="fileUploadMode" style="display: none;">
-            <form method="POST" enctype="multipart/form-data">
-              <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
-              <label>WO Number</label>
-              <input type="text" name="wo" placeholder="Enter work order number" required>
-              <label>Upload File (.csv / .txt)</label>
-              <div class="file-input">
-                <input type="file" name="file" required>
-                <button type="submit" name="upload">Upload</button>
-              </div>
-              <div style="margin-top: 12px; font-size: 12px; color: var(--content-muted);">
-                <a href="javascript:void(0)" id="toggleToRangeInput" style="color: inherit; text-decoration: underline;">
-                  &larr; Kembali ke Input Range Nomor
-                </a>
-              </div>
-            </form>
-          </div>
-
-          <?php if (!empty($msgUpload)): ?>
-            <div class="status-msg" style="margin-top: 12px;"><?= $msgUpload ?></div>
-          <?php endif; ?>
         </div>
 
+        <div id="recordConfirmModal" class="modal" style="display: none;">
+          <div class="modal-content">
+            <h3 id="recordConfirmTitle">Konfirmasi Record</h3>
+            <p id="recordConfirmMessage">Record batch ini ke database sebelum cetak?</p>
+            <div class="modal-actions">
+              <button type="button" id="recordConfirmYes">Ya</button>
+              <button type="button" id="recordConfirmNo">Tidak</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Scripts for Range Count, Barcode Rendering, & Print Flow -->
         <script>
           (function () {
+            // 1. Range Count Logic
             var rangeForm = document.getElementById("rangeForm");
             var startInput = document.getElementById("rangeStartNumber");
             var endInput = document.getElementById("rangeEndNumber");
             var woInput = document.getElementById("rangeWo");
             var countBtn = document.getElementById("btnCountRange");
+            var qtyBtn = document.getElementById("btnQuantityRange");
+            var qtyText = document.getElementById("rangeCountText");
             var countVal = document.getElementById("rangeCountValue");
-            var countBox = document.getElementById("rangeCountResult");
             var downloadBtn = document.getElementById("btnDownloadTxt");
             var errorBox = document.getElementById("rangeErrorMsg");
             var toggleToFile = document.getElementById("toggleToUploadFile");
@@ -3757,11 +4188,8 @@ if ($recordType === 'nameplate') {
             var rangeMode = document.getElementById("rangeInputMode");
             var fileMode = document.getElementById("fileUploadMode");
 
-            if (!rangeForm || !startInput || !endInput || !countBtn || !countVal) {
-              return;
-            }
-
             function parseClientRange() {
+              if (!startInput || !endInput) return { success: false, error: "Input range belum siap." };
               var startVal = startInput.value.trim();
               var endVal = endInput.value.trim();
               if (!startVal || !endVal) {
@@ -3770,10 +4198,10 @@ if ($recordType === 'nameplate') {
               var m1 = startVal.match(/^(.*?)(\d+)$/);
               var m2 = endVal.match(/^(.*?)(\d+)$/);
               if (!m1 || !m2) {
-                return { success: false, error: "Nomor awal dan nomor akhir harus memiliki bagian angka di belakangnya." };
+                return { success: false, error: "Nomor awal dan akhir harus memiliki angka di belakangnya." };
               }
               if (m1[1] !== m2[1]) {
-                return { success: false, error: "Awalan (prefix) nomor awal dan nomor akhir harus sama ('" + m1[1] + "' vs '" + m2[1] + "')." };
+                return { success: false, error: "Awalan (prefix) nomor awal dan akhir harus sama ('" + m1[1] + "' vs '" + m2[1] + "')." };
               }
               try {
                 var n1 = BigInt(m1[2]);
@@ -3783,105 +4211,68 @@ if ($recordType === 'nameplate') {
                 }
                 var count = n2 - n1 + 1n;
                 var padLen = Math.max(m1[2].length, m2[2].length);
-                return {
-                  success: true,
-                  prefix: m1[1],
-                  n1: n1,
-                  n2: n2,
-                  count: count,
-                  padLen: padLen
-                };
+                return { success: true, prefix: m1[1], n1: n1, n2: n2, count: count, padLen: padLen };
               } catch (e) {
-                return { success: false, error: "Angka range tidak valid." };
+                return { success: false, error: "Format range angka tidak valid." };
               }
             }
 
             function doCount() {
               var info = parseClientRange();
               if (!info.success) {
-                countVal.textContent = "-";
+                if (qtyText) qtyText.textContent = "Quantity";
+                if (countVal) countVal.textContent = "-";
                 if (errorBox) {
                   errorBox.textContent = info.error;
                   errorBox.style.display = "block";
                 }
                 return null;
               }
-              if (errorBox) {
-                errorBox.style.display = "none";
-              }
-              countVal.textContent = info.count.toLocaleString("id-ID");
-              if (countBox) {
-                countBox.style.borderColor = "#10b981";
-                countBox.style.background = "rgba(16, 185, 129, 0.08)";
-              }
+              if (errorBox) errorBox.style.display = "none";
+              var countStr = info.count.toLocaleString("id-ID");
+              if (qtyText) qtyText.textContent = "Qty: " + countStr;
+              if (countVal) countVal.textContent = countStr;
               return info;
             }
 
-            countBtn.addEventListener("click", function () {
-              doCount();
-            });
-
-            startInput.addEventListener("input", function () {
-              if (startInput.value && endInput.value) {
-                doCount();
-              }
-            });
-
-            endInput.addEventListener("input", function () {
-              if (startInput.value && endInput.value) {
-                doCount();
-              }
-            });
+            if (countBtn) {
+              countBtn.addEventListener("click", doCount);
+            }
+            if (qtyBtn) {
+              qtyBtn.addEventListener("click", doCount);
+            }
+            if (startInput) {
+              startInput.addEventListener("input", function () {
+                if (startInput.value && endInput && endInput.value) doCount();
+              });
+            }
+            if (endInput) {
+              endInput.addEventListener("input", function () {
+                if (endInput.value && startInput && startInput.value) doCount();
+              });
+            }
 
             if (downloadBtn) {
               downloadBtn.addEventListener("click", function () {
                 var info = doCount();
                 if (!info) return;
-
-                if (info.count > 200000n) {
-                  if (!confirm("Range nomor ini sangat besar (" + info.count.toLocaleString("id-ID") + " baris). Lanjutkan pembuatan file TXT di browser?")) {
-                    return;
-                  }
-                }
-
                 var lines = [];
-                var n1 = info.n1;
-                var n2 = info.n2;
-                var prefix = info.prefix;
-                var padLen = info.padLen;
-
-                for (var i = n1; i <= n2; i++) {
-                  var numStr = i.toString();
-                  while (numStr.length < padLen) {
-                    numStr = "0" + numStr;
-                  }
-                  lines.push(prefix + numStr);
+                for (var i = info.n1; i <= info.n2; i++) {
+                  var s = i.toString();
+                  while (s.length < info.padLen) s = "0" + s;
+                  lines.push(info.prefix + s);
                 }
-
                 var blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/plain;charset=utf-8" });
                 var link = document.createElement("a");
                 link.href = URL.createObjectURL(blob);
-                var wo = (woInput ? woInput.value.trim() : "") || "barcode_range";
-                var safeName = wo.replace(/[^a-zA-Z0-9_\-]/g, "_");
-                link.download = safeName + ".txt";
+                var woVal = (woInput ? woInput.value.trim() : "") || "barcode_range";
+                link.download = woVal.replace(/[\\/:*?\"<>|]/g, "_") + ".txt";
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
                 URL.revokeObjectURL(link.href);
               });
             }
-
-            rangeForm.addEventListener("submit", function (e) {
-              var info = parseClientRange();
-              if (!info.success) {
-                e.preventDefault();
-                if (errorBox) {
-                  errorBox.textContent = info.error;
-                  errorBox.style.display = "block";
-                }
-                return false;
-              }
-            });
 
             if (toggleToFile && toggleToRange && rangeMode && fileMode) {
               toggleToFile.addEventListener("click", function () {
@@ -3894,559 +4285,143 @@ if ($recordType === 'nameplate') {
               });
             }
 
-            if (startInput.value && endInput.value) {
-              doCount();
+            // 2. Render Barcodes (Real or Samples)
+            var actualList = <?= json_encode(array_values($displayList ?? [])) ?>;
+            if (actualList && actualList.length > 0) {
+              var renderLimit = Math.min(actualList.length, 100);
+              for (var i = 0; i < renderLimit; i++) {
+                try {
+                  JsBarcode("#studio_bc_" + i, String(actualList[i]), {
+                    format: "CODE128",
+                    displayValue: false,
+                    height: 38,
+                    width: 1.4,
+                    margin: 0
+                  });
+                } catch (e) {}
+              }
+              if (actualList.length > renderLimit) {
+                setTimeout(function () {
+                  for (var j = renderLimit; j < actualList.length; j++) {
+                    try {
+                      JsBarcode("#studio_bc_" + j, String(actualList[j]), {
+                        format: "CODE128",
+                        displayValue: false,
+                        height: 38,
+                        width: 1.4,
+                        margin: 0
+                      });
+                    } catch (e) {}
+                  }
+                }, 60);
+              }
+            } else {
+              // Draw 12 sample barcodes matching reference image
+              var sampleList = ["123309451001", "123307880047", "123007883059", "123307883080",
+                                "123309451001", "123307882052", "123307883053", "123307883084",
+                                "123309451003", "123307883008", "123307883079", "123303883000"];
+              for (var s = 0; s < 12; s++) {
+                try {
+                  JsBarcode("#studio_sample_bc_" + s, sampleList[s] || "123309451001", {
+                    format: "CODE128",
+                    displayValue: false,
+                    height: 38,
+                    width: 1.4,
+                    margin: 0
+                  });
+                } catch (e) {}
+              }
+            }
+
+            // 3. Print Dialog & Record Modal Flow
+            var printForm = document.getElementById("printForm");
+            var printBtn = document.getElementById("printBtn");
+            var studioPrintBtn = document.getElementById("btnStudioPrintNow");
+            var recordModal = document.getElementById("recordConfirmModal");
+            var recordField = document.getElementById("recordBatchChoice");
+            var yesBtn = document.getElementById("recordConfirmYes");
+            var noBtn = document.getElementById("recordConfirmNo");
+
+            // Live update preview cards when Type Meter changes
+            var tmSelect = document.getElementById("typeMeterSelect");
+            if (tmSelect) {
+              tmSelect.addEventListener("change", function () {
+                var val = this.value;
+                if (val) {
+                  document.querySelectorAll(".studio-label-meter-type").forEach(function (el) {
+                    el.textContent = val;
+                  });
+                }
+              });
+            }
+            var evSelect = document.getElementById("evTypeNameSelect");
+            if (evSelect) {
+              evSelect.addEventListener("change", function () {
+                var val = this.value;
+                if (val) {
+                  document.querySelectorAll(".studio-label-meter-type").forEach(function (el) {
+                    el.textContent = val;
+                  });
+                }
+              });
+            }
+
+            function triggerPrintFlow(e) {
+              if (e && e.preventDefault) e.preventDefault();
+              if (!printForm) return;
+              var batchId = printForm.querySelector("input[name='batch_id']").value;
+              if (!batchId || batchId === "0") {
+                alert("Silakan pilih Work Order dan Batch terlebih dahulu sebelum mencetak.");
+                var batchSelect = document.getElementById("studioBatchSelect");
+                if (batchSelect) batchSelect.focus();
+                return;
+              }
+              var isEv = printForm.dataset.isEv === "1";
+              if (isEv) {
+                var evSel = document.getElementById("evTypeNameSelect");
+                if (evSel && !evSel.value) {
+                  alert("Silakan pilih Custom Text EV terlebih dahulu.");
+                  evSel.focus();
+                  return;
+                }
+              } else {
+                var tmSel = document.getElementById("typeMeterSelect");
+                if (tmSel && !tmSel.value) {
+                  alert("Silakan pilih Type Meter pada Custom Text terlebih dahulu.");
+                  tmSel.focus();
+                  return;
+                }
+              }
+              if (recordModal) {
+                recordModal.style.display = "block";
+              } else {
+                printForm.submit();
+              }
+            }
+
+            if (studioPrintBtn) {
+              studioPrintBtn.addEventListener("click", triggerPrintFlow);
+            }
+            if (printBtn) {
+              printBtn.addEventListener("click", triggerPrintFlow);
+            }
+
+            if (yesBtn && recordField && printForm) {
+              yesBtn.addEventListener("click", function () {
+                recordField.value = "1";
+                recordModal.style.display = "none";
+                printForm.submit();
+              });
+            }
+            if (noBtn && recordField && printForm) {
+              noBtn.addEventListener("click", function () {
+                recordField.value = "0";
+                recordModal.style.display = "none";
+                printForm.submit();
+              });
             }
           })();
         </script>
-
-	        <div class="card">
-          <div class="step-title">
-            <span class="icon">2</span>
-            Split Data WO
-          </div>
-          <p>Process up to 999 items per work order.</p>
-          <form method="POST">
-            <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
-            <label>Select Work Order</label>
-            <select name="wo_selected" required>
-              <option value="">Choose a work order</option>
-              <?php
-              $woRes = $koneksi->query("SELECT wo, COUNT(*) jml FROM {$pcbNumberTable} WHERE wo IS NOT NULL GROUP BY wo ORDER BY wo");
-              while ($w = $woRes->fetch_assoc()) {
-                  $woVal = htmlspecialchars($w['wo']);
-                  echo "<option value='{$woVal}'>{$woVal} ({$w['jml']})</option>";
-              }
-              ?>
-            </select>
-            <div class="button-group">
-              <button type="submit" name="split">Split</button>
-              <button type="submit" name="finish" onclick="return confirm('Yakin hapus WO ini?')">Finish</button>
-            </div>
-            <?php if (!empty($msgSplit)): ?>
-              <p class="status-msg"><?= htmlspecialchars($msgSplit) ?></p>
-            <?php endif; ?>
-            <?php if (!empty($msgFinish)): ?>
-              <p class="status-msg"><?= htmlspecialchars($msgFinish) ?></p>
-            <?php endif; ?>
-	          </form>
-	        </div>
-
-	        <div class="card">
-	          <div class="step-title">
-	            <span class="icon">3</span>
-	            Select Work Order for Print
-	          </div>
-	          <form method="GET">
-	            <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
-            <select name="wo" onchange="this.form.submit()">
-              <option value="">Choose a work order</option>
-              <?php
-              mysqli_data_seek($woList, 0);
-              while ($wo = mysqli_fetch_assoc($woList)) {
-              ?>
-                <option value="<?= $wo['wo'] ?>" <?= $selectedWO == $wo['wo'] ? 'selected' : '' ?>>
-                  <?= $wo['wo'] ?>
-                </option>
-              <?php } ?>
-            </select>
-          </form>
-        </div>
-
-	        <div class="card">
-	          <div class="step-title">
-	            <span class="icon">4</span>
-	            Select Batch
-	          </div>
-          <p>Choose the batch for processing.</p>
-	          <form method="GET">
-	            <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
-	            <input type="hidden" name="wo" value="<?= htmlspecialchars($selectedWO) ?>">
-            <select name="batch_id" onchange="this.form.submit()" <?= $selectedWO === '' ? 'disabled' : '' ?>>
-              <option value=""><?= $selectedWO === '' ? 'Pilih Work Order dulu' : '-- Pilih Batch --' ?></option>
-              <?php
-              if ($selectedWO != '') {
-                  $batchQuery = "SELECT * FROM {$pcbBatchTable}";
-                  $safeWo = mysqli_real_escape_string($koneksi, $selectedWO);
-                  $batchQuery .= " WHERE wo='$safeWo'";
-                  $batchQuery .= " ORDER BY id ASC";
-                  $batchList = mysqli_query($koneksi, $batchQuery);
-                  while ($batch = mysqli_fetch_assoc($batchList)) {
-                      $id = (int) $batch['id'];
-                      $sel = ($selectedBatchId == $id) ? 'selected' : '';
-                      $label = htmlspecialchars($batch['nama_batch']);
-                      if ($isEvChargerMenu) {
-                          $statRes = $koneksi->query("SELECT 
-                              COUNT(*) AS total_cnt,
-                              SUM(CASE WHEN is_printed = 1 THEN 1 ELSE 0 END) AS printed_cnt,
-                              SUM(CASE WHEN is_printed = 0 THEN 1 ELSE 0 END) AS unprinted_cnt
-                              FROM ev_charger_nomor_barcode WHERE batch_id=$id");
-                          $statRow = $statRes ? $statRes->fetch_assoc() : null;
-                          $totalCnt = (int) ($statRow['total_cnt'] ?? 0);
-                          $printedCnt = (int) ($statRow['printed_cnt'] ?? 0);
-                          $unprintedCnt = (int) ($statRow['unprinted_cnt'] ?? 0);
-
-                          if ($totalCnt > 0 && $unprintedCnt === 0) {
-                              $label .= ' (Selesai di-print)';
-                          } elseif ($printedCnt > 0) {
-                              $label .= " (Sisa {$unprintedCnt} dari {$totalCnt} nomor)";
-                          } else {
-                              $label .= " ({$totalCnt} nomor, Belum di-print)";
-                          }
-                      } else {
-                          $checkBatchPrint = $koneksi->query("SELECT COUNT(*) as cnt FROM {$pcbPrintLogTable} WHERE batch_id=$id");
-                          $batchPrintRow = $checkBatchPrint->fetch_assoc();
-                          if ($batchPrintRow['cnt'] > 0) {
-                              $label .= ' (Sudah di-print)';
-                          }
-                      }
-                      echo "<option value='{$id}' {$sel}>{$label}</option>";
-                  }
-              }
-              ?>
-            </select>
-          </form>
-        </div>
-
-        <?php if ($selectedBatchId): ?>
-          <div class="card">
-            <?php if (!empty($awal9) || !empty($akhir9)): ?>
-              <div class="preview-wrap">
-                <div class="col">
-                  <h2>AWAL</h2>
-                  <div class="grid9">
-                    <?php foreach ($awal9 as $i => $num): ?>
-                      <div class="label">
-                        <svg id="awal-<?= $i ?>"></svg>
-	                        <?= $isEvChargerMenu ? buildEvPcbCodeLine($num, $pcbBatchLabel, true) : buildHdTextPlaceholder('pcb-preview-text', $num, 'center') ?>
-                      </div>
-                    <?php endforeach; ?>
-                  </div>
-                </div>
-                <div class="col">
-                  <h2>AKHIR</h2>
-                  <div class="grid9">
-                    <?php foreach ($akhir9 as $i => $num): ?>
-                      <div class="label">
-                        <svg id="akhir-<?= $i ?>"></svg>
-	                        <?= $isEvChargerMenu ? buildEvPcbCodeLine($num, $pcbBatchLabel, true) : buildHdTextPlaceholder('pcb-preview-text', $num, 'center') ?>
-                      </div>
-                    <?php endforeach; ?>
-                  </div>
-                </div>
-              </div>
-
-	              <?php if ($isEvChargerMenu): ?>
-	                <div class="ev-batch-status-box" style="margin-bottom: 16px; padding: 14px 18px; border-radius: 12px; background: var(--content-panel-soft); border: 1px solid var(--content-line-strong);">
-	                  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-	                    <div>
-	                      <span style="font-size: 13px; color: var(--content-muted);">Total Barcode Batch:</span>
-	                      <strong style="margin-left: 6px; font-size: 15px;"><?= number_format($totalBatchCount, 0, ',', '.') ?></strong>
-	                    </div>
-	                    <div>
-	                      <span style="font-size: 13px; color: #10b981;">Sudah Tercetak:</span>
-	                      <strong style="margin-left: 6px; font-size: 15px; color: #10b981;"><?= number_format($printedCount, 0, ',', '.') ?></strong>
-	                    </div>
-	                    <div>
-	                      <span style="font-size: 13px; color: #3b82f6;">Sisa Belum Cetak:</span>
-	                      <strong style="margin-left: 6px; font-size: 15px; color: #3b82f6;"><?= number_format($unprintedCount, 0, ',', '.') ?></strong>
-	                    </div>
-	                  </div>
-	                  <?php if ($printedCount > 0 && !empty($printedNumbers)): ?>
-	                    <div style="margin-top: 10px; font-size: 12px; color: var(--content-muted); border-top: 1px dashed var(--content-line-strong); padding-top: 8px;">
-	                      <span style="color: #10b981; font-weight: 600;">&#10003; Tercetak:</span> <?= htmlspecialchars($printedNumbers[0]) ?> s/d <?= htmlspecialchars(end($printedNumbers)) ?> (<?= number_format($printedCount, 0, ',', '.') ?> nomor tercetak, Admin dapat cetak ulang)
-	                    </div>
-	                  <?php endif; ?>
-	                  <?php if ($unprintedCount > 0 && !empty($unprintedNumbers)): ?>
-	                    <div style="margin-top: 6px; font-size: 12px; color: #3b82f6;">
-	                      <span style="font-weight: 600;">&#9654; Tersedia untuk Cetak:</span> <?= htmlspecialchars($unprintedNumbers[0]) ?> s/d <?= htmlspecialchars(end($unprintedNumbers)) ?> (<?= number_format($unprintedCount, 0, ',', '.') ?> nomor)
-	                    </div>
-	                  <?php endif; ?>
-	                </div>
-	              <?php endif; ?>
-
-	              <?php if ($isPrinted): ?>
-	                <div class="warning-msg" style="<?= $isEvChargerMenu ? 'background: rgba(59, 130, 246, 0.1); border-color: #3b82f6; color: #2563eb;' : '' ?>">
-	                  <?= $isEvChargerMenu ? 'Batch ini sudah selesai di-print seluruhnya (' . number_format($totalBatchCount, 0, ',', '.') . ' nomor sudah tercetak). Sebagai Admin, Anda dapat melakukan print duplikat jika diperlukan.' : 'Batch ini sudah di-print. Admin masih bisa print ulang jika diperlukan.' ?>
-	                </div>
-	              <?php endif; ?>
-	              <form id="printForm" method="POST" data-is-printed="<?= $isPrinted ? '1' : '0' ?>" data-is-ev="<?= $isEvChargerMenu ? '1' : '0' ?>">
-	                <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
-	                <input type="hidden" name="batch_id" value="<?= $selectedBatchId ?>">
-	                <input type="hidden" name="wo" value="<?= htmlspecialchars($woBatch) ?>">
-	                <input type="hidden" name="start" value="<?= htmlspecialchars($start) ?>">
-	                <input type="hidden" name="end" value="<?= htmlspecialchars($end) ?>">
-	                <input type="hidden" name="<?= $isEvChargerMenu ? 'print_ev_charger' : 'print' ?>" value="1">
-	                <input type="hidden" name="record_batch" id="recordBatchChoice" value="0">
-
-	                <?php if ($isEvChargerMenu): ?>
-	                  <div style="margin-bottom: 16px; padding: 14px; border-radius: 10px; background: var(--content-panel-soft); border: 1px solid var(--content-line-strong);">
-	                    <label style="font-weight: 600; font-size: 14px; margin-bottom: 8px; display: block; color: var(--content-text);">Custom Range Print EV Charger</label>
-	                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
-	                      <div>
-	                        <label style="font-size: 12px; margin-bottom: 4px;">Nomor Awal Print</label>
-	                        <input type="text" name="ev_start_number" id="evStartNumber" value="<?= htmlspecialchars($defaultEvStart) ?>" required style="margin-bottom: 0;">
-	                      </div>
-	                      <div>
-	                        <label style="font-size: 12px; margin-bottom: 4px;">Nomor Akhir Print</label>
-	                        <input type="text" name="ev_end_number" id="evEndNumber" value="<?= htmlspecialchars($defaultEvEnd) ?>" required style="margin-bottom: 0;">
-	                      </div>
-	                      <div>
-	                        <label style="font-size: 12px; margin-bottom: 4px;">Quantity (Jumlah Nomor)</label>
-	                        <input type="number" name="ev_print_qty" id="evPrintQty" min="1" max="<?= max(1, $totalBatchCount) ?>" value="<?= $defaultEvQty ?>" required style="margin-bottom: 0;">
-	                      </div>
-	                    </div>
-	                    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 10px;">
-	                      <div style="font-size: 12px; color: var(--content-muted);">
-	                        Estimasi: <strong id="evSheetsEstimate" style="color: var(--content-button-hover);"><?= (int) ceil($defaultEvQty / 9) ?> Lembar</strong> (3x3 = 9 barcode/lembar)
-	                      </div>
-	                      <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-	                        <?php if ($unprintedCount > 0): ?>
-	                          <button type="button" id="btnEvQuickAll" style="font-size: 11px; padding: 4px 10px; border-radius: 6px; background: var(--content-panel); border: 1px solid var(--content-line-strong); cursor: pointer; color: var(--content-text);">Cetak Sisa (<?= $unprintedCount ?>)</button>
-	                        <?php endif; ?>
-	                        <button type="button" id="btnEvQuickFullBatch" style="font-size: 11px; padding: 4px 10px; border-radius: 6px; background: var(--content-panel); border: 1px solid var(--content-line-strong); cursor: pointer; color: var(--content-text);">Semua Batch (<?= $totalBatchCount ?>)</button>
-	                        <button type="button" id="btnEvQuick9" style="font-size: 11px; padding: 4px 10px; border-radius: 6px; background: var(--content-panel); border: 1px solid var(--content-line-strong); cursor: pointer; color: var(--content-text);">1 Lembar (9)</button>
-	                        <button type="button" id="btnEvQuick18" style="font-size: 11px; padding: 4px 10px; border-radius: 6px; background: var(--content-panel); border: 1px solid var(--content-line-strong); cursor: pointer; color: var(--content-text);">2 Lembar (18)</button>
-	                      </div>
-	                    </div>
-	                    <div id="evRangeError" style="display: none; margin-top: 8px; padding: 6px 12px; border-radius: 8px; font-size: 12px; border: 1px solid;"></div>
-	                  </div>
-
-	                  <label>Custom Text & Tanggal</label>
-	                  <div class="custom-fields">
-	                    <select name="ev_type_name" required>
-	                      <option value=""><?= empty($evTypeOptions) ? 'Belum ada custom text EV' : 'Pilih Custom Text EV' ?></option>
-	                      <?php foreach ($evTypeOptions as $evTypeOption): ?>
-	                        <option value="<?= htmlspecialchars($evTypeOption) ?>"><?= htmlspecialchars($evTypeOption) ?></option>
-	                      <?php endforeach; ?>
-	                    </select>
-	                    <input type="date" name="date" value="<?= date('Y-m-d') ?>" required>
-	                  </div>
-	                  <p class="status-msg" style="margin-top: 6px;">Pilih custom text EV Charger dan range nomor barcode yang akan dicetak. Sebagai Admin, Anda diizinkan melakukan print duplikat jika diperlukan.</p>
-	                <?php else: ?>
-	                  <label>Custom Text</label>
-	                  <div class="custom-fields">
-	                    <select name="type_meter" required>
-	                      <option value=""><?= empty($typeMeterOptions) ? 'Belum ada Type Meter' : 'Pilih Type Meter' ?></option>
-	                      <?php foreach ($typeMeterOptions as $typeMeterOption): ?>
-	                        <option value="<?= htmlspecialchars($typeMeterOption) ?>"><?= htmlspecialchars($typeMeterOption) ?></option>
-	                      <?php endforeach; ?>
-	                    </select>
-	                    <input type="date" name="date" value="<?= date('Y-m-d') ?>" required>
-	                  </div>
-	                <?php endif; ?>
-
-	                <button class="primary" type="button" id="printBtn"><?= $isEvChargerMenu ? 'Print Barcode EV' : 'Print' ?></button>
-	              </form>
-              <div id="recordConfirmModal" class="modal">
-                <div class="modal-content">
-                  <h3 id="recordConfirmTitle">Konfirmasi Record</h3>
-                  <p id="recordConfirmMessage">Record batch ini ke database sebelum cetak?</p>
-                  <div class="modal-actions">
-                    <button type="button" id="recordConfirmYes">Ya</button>
-                    <button type="button" id="recordConfirmNo">Tidak</button>
-                  </div>
-                </div>
-              </div>
-              <script>
-                (function () {
-                  var printForm = document.getElementById("printForm");
-                  var printBtn = document.getElementById("printBtn");
-                  var recordModal = document.getElementById("recordConfirmModal");
-                  var recordField = document.getElementById("recordBatchChoice");
-                  var yesBtn = document.getElementById("recordConfirmYes");
-                  var noBtn = document.getElementById("recordConfirmNo");
-                  var modalTitle = document.getElementById("recordConfirmTitle");
-                  var modalMessage = document.getElementById("recordConfirmMessage");
-
-                  if (!printForm || !printBtn || !recordModal || !recordField || !yesBtn || !noBtn || !modalTitle || !modalMessage) {
-                    return;
-                  }
-
-                  var isEvMode = printForm.dataset.isEv === "1";
-                  var evStartInput = document.getElementById("evStartNumber");
-                  var evEndInput = document.getElementById("evEndNumber");
-                  var evQtyInput = document.getElementById("evPrintQty");
-                  var evSheetsEstimate = document.getElementById("evSheetsEstimate");
-                  var evRangeError = document.getElementById("evRangeError");
-                  var btnQuickAll = document.getElementById("btnEvQuickAll");
-                  var btnQuickFullBatch = document.getElementById("btnEvQuickFullBatch");
-                  var btnQuick9 = document.getElementById("btnEvQuick9");
-                  var btnQuick18 = document.getElementById("btnEvQuick18");
-
-                  var allBatchList = <?= json_encode(array_values($allNumbers ?? [])) ?>;
-                  var unprintedList = <?= json_encode(array_values($unprintedNumbers ?? [])) ?>;
-                  var printedSet = new Set(<?= json_encode(array_values($printedNumbers ?? [])) ?>);
-                  var allMap = {};
-                  for (var i = 0; i < allBatchList.length; i++) {
-                    allMap[allBatchList[i]] = i;
-                  }
-
-                  var hasEvDuplicates = false;
-                  var evDuplicateCount = 0;
-
-                  function showEvNotice(msg, isError) {
-                    if (evRangeError) {
-                      evRangeError.textContent = msg;
-                      evRangeError.style.display = "block";
-                      if (isError) {
-                        evRangeError.style.background = "rgba(239, 68, 68, 0.12)";
-                        evRangeError.style.borderColor = "#ef4444";
-                        evRangeError.style.color = "#dc2626";
-                      } else {
-                        evRangeError.style.background = "rgba(245, 158, 11, 0.12)";
-                        evRangeError.style.borderColor = "#f59e0b";
-                        evRangeError.style.color = "#b45309";
-                      }
-                    }
-                    if (printBtn) {
-                      printBtn.disabled = isError;
-                      printBtn.style.opacity = isError ? "0.5" : "1";
-                    }
-                  }
-
-                  function clearEvNotice() {
-                    if (evRangeError) {
-                      evRangeError.style.display = "none";
-                      evRangeError.textContent = "";
-                    }
-                    if (printBtn) {
-                      printBtn.disabled = false;
-                      printBtn.style.opacity = "1";
-                    }
-                  }
-
-                  function validateEvRange() {
-                    if (!isEvMode) return true;
-                    if (!evStartInput || !evEndInput || !evQtyInput) return false;
-                    if (allBatchList.length === 0) {
-                      showEvNotice("Tidak ada data nomor barcode dalam batch ini.", true);
-                      return false;
-                    }
-
-                    var sVal = evStartInput.value.trim();
-                    var eVal = evEndInput.value.trim();
-
-                    if (!sVal || !eVal) {
-                      showEvNotice("Nomor awal dan nomor akhir wajib diisi.", true);
-                      return false;
-                    }
-
-                    if (allMap[sVal] === undefined) {
-                      showEvNotice("Nomor awal (" + sVal + ") tidak ditemukan dalam data batch ini.", true);
-                      return false;
-                    }
-                    if (allMap[eVal] === undefined) {
-                      showEvNotice("Nomor akhir (" + eVal + ") tidak ditemukan dalam data batch ini.", true);
-                      return false;
-                    }
-
-                    var sIdx = allMap[sVal];
-                    var eIdx = allMap[eVal];
-                    if (sIdx > eIdx) {
-                      showEvNotice("Nomor akhir harus berada setelah atau sama dengan nomor awal.", true);
-                      return false;
-                    }
-
-                    var count = eIdx - sIdx + 1;
-                    evQtyInput.value = count;
-                    var sheets = Math.ceil(count / 9);
-                    if (evSheetsEstimate) {
-                      var lastPageCount = count % 9 === 0 ? 9 : (count % 9);
-                      evSheetsEstimate.textContent = sheets + " Lembar (" + count + " barcode" + (sheets > 1 ? ", lembar terakhir: " + lastPageCount + " barcode" : "") + ")";
-                    }
-
-                    hasEvDuplicates = false;
-                    evDuplicateCount = 0;
-                    for (var idx = sIdx; idx <= eIdx; idx++) {
-                      var num = allBatchList[idx];
-                      if (printedSet.has(num)) {
-                        hasEvDuplicates = true;
-                        evDuplicateCount++;
-                      }
-                    }
-
-                    if (hasEvDuplicates) {
-                      showEvNotice("⚠️ Perhatian: Range ini mengandung " + evDuplicateCount + " nomor yang sudah pernah dicetak (Print Duplikat). Sebagai Admin, Anda dapat mencetak ulang nomor ini.", false);
-                    } else {
-                      clearEvNotice();
-                    }
-                    return true;
-                  }
-
-                  if (isEvMode) {
-                    if (evStartInput) evStartInput.addEventListener("input", validateEvRange);
-                    if (evEndInput) evEndInput.addEventListener("input", validateEvRange);
-                    if (evQtyInput) {
-                      evQtyInput.addEventListener("input", function () {
-                        var qty = parseInt(evQtyInput.value, 10);
-                        if (isNaN(qty) || qty < 1) return;
-                        var sVal = evStartInput.value.trim();
-                        if (allMap[sVal] === undefined) return;
-                        var sIdx = allMap[sVal];
-                        var targetIdx = sIdx + qty - 1;
-                        if (targetIdx < allBatchList.length) {
-                          evEndInput.value = allBatchList[targetIdx];
-                        } else {
-                          evEndInput.value = allBatchList[allBatchList.length - 1];
-                        }
-                        validateEvRange();
-                      });
-                    }
-
-                    if (btnQuickAll && unprintedList.length > 0) {
-                      btnQuickAll.addEventListener("click", function () {
-                        evStartInput.value = unprintedList[0];
-                        evEndInput.value = unprintedList[unprintedList.length - 1];
-                        validateEvRange();
-                      });
-                    }
-
-                    if (btnQuickFullBatch && allBatchList.length > 0) {
-                      btnQuickFullBatch.addEventListener("click", function () {
-                        evStartInput.value = allBatchList[0];
-                        evEndInput.value = allBatchList[allBatchList.length - 1];
-                        validateEvRange();
-                      });
-                    }
-
-                    var baseList = unprintedList.length > 0 ? unprintedList : allBatchList;
-                    if (btnQuick9 && baseList.length > 0) {
-                      btnQuick9.addEventListener("click", function () {
-                        evStartInput.value = baseList[0];
-                        var count = Math.min(9, baseList.length);
-                        evEndInput.value = baseList[count - 1];
-                        validateEvRange();
-                      });
-                    }
-                    if (btnQuick18 && baseList.length > 0) {
-                      btnQuick18.addEventListener("click", function () {
-                        evStartInput.value = baseList[0];
-                        var count = Math.min(18, baseList.length);
-                        evEndInput.value = baseList[count - 1];
-                        validateEvRange();
-                      });
-                    }
-
-                    validateEvRange();
-                  }
-
-                  function openRecordModal() {
-                    if (typeof printForm.reportValidity === "function" && !printForm.reportValidity()) {
-                      return false;
-                    }
-                    if (isEvMode && !validateEvRange()) {
-                      return false;
-                    }
-
-                    var isPrinted = printForm.dataset.isPrinted === "1";
-                    if (isEvMode) {
-                      var sVal = evStartInput ? evStartInput.value.trim() : "";
-                      var eVal = evEndInput ? evEndInput.value.trim() : "";
-                      var qVal = evQtyInput ? evQtyInput.value.trim() : "";
-                      if (hasEvDuplicates) {
-                        modalTitle.textContent = "Konfirmasi Print Duplikat EV Charger";
-                        modalMessage.textContent = "Terdapat " + evDuplicateCount + " nomor yang sudah pernah dicetak dalam range " + sVal + " s/d " + eVal + " (Total " + qVal + " barcode).\n\nSebagai Admin, Anda dapat mencetak ulang (duplikat). Lanjutkan cetak duplikat?";
-                        yesBtn.textContent = "Ya, Cetak Duplikat";
-                        noBtn.textContent = "Batal";
-                      } else {
-                        modalTitle.textContent = "Konfirmasi Record EV Charger";
-                        modalMessage.textContent = "Cetak dan record " + qVal + " barcode (" + sVal + " s/d " + eVal + ") ke database? Nomor yang direcord tidak dapat dicetak ulang oleh operator.";
-                        yesBtn.textContent = "Ya, Record & Cetak";
-                        noBtn.textContent = "Hanya Cetak (Tanpa Record)";
-                      }
-                    } else if (isPrinted) {
-                      modalTitle.textContent = "Konfirmasi Print Ulang";
-                      modalMessage.textContent = "Batch ini sudah print, yakin print ulang?";
-                      yesBtn.textContent = "Ya";
-                      noBtn.textContent = "Tidak";
-                    } else {
-                      modalTitle.textContent = "Konfirmasi Record";
-                      modalMessage.textContent = "Record batch ini ke database sebelum cetak?";
-                      yesBtn.textContent = "Ya";
-                      noBtn.textContent = "Tidak";
-                    }
-
-                    recordModal.style.display = "block";
-                    return true;
-                  }
-
-                  printBtn.addEventListener("click", function () {
-                    openRecordModal();
-                  });
-
-                  printForm.addEventListener("submit", function (event) {
-                    if (printForm.dataset.confirmed === "1") {
-                      return;
-                    }
-                    event.preventDefault();
-                    openRecordModal();
-                  });
-
-                  yesBtn.addEventListener("click", function () {
-                    if (isEvMode) {
-                      recordField.value = "1";
-                    } else {
-                      var isPrinted = printForm.dataset.isPrinted === "1";
-                      recordField.value = isPrinted ? "0" : "1";
-                    }
-                    printForm.dataset.confirmed = "1";
-                    printForm.submit();
-                  });
-
-                  noBtn.addEventListener("click", function () {
-                    if (isEvMode) {
-                      if (hasEvDuplicates) {
-                        recordModal.style.display = "none";
-                        return;
-                      }
-                      recordField.value = "0";
-                      printForm.dataset.confirmed = "1";
-                      printForm.submit();
-                      return;
-                    }
-
-                    var isPrinted = printForm.dataset.isPrinted === "1";
-                    if (isPrinted) {
-                      recordModal.style.display = "none";
-                      return;
-                    }
-                    recordField.value = "0";
-                    printForm.dataset.confirmed = "1";
-                    printForm.submit();
-                  });
-                })();
-              </script>
-
-              <script>
-                (function () {
-                  var awal = <?= json_encode($awal9) ?>;
-                  var akhir = <?= json_encode($akhir9) ?>;
-                  function draw(list, prefix) {
-                    for (var i = 0; i < list.length; i++) {
-                      JsBarcode("#" + prefix + "-" + i, String(list[i]), {
-                        format: "CODE128",
-                        displayValue: false,
-                        height: 36,
-                        width: 1.25,
-                        margin: 0
-                      });
-                    }
-                  }
-                  draw(awal, "awal");
-                  draw(akhir, "akhir");
-                  Array.prototype.forEach.call(document.querySelectorAll('svg[id^="awal-"], svg[id^="akhir-"]'), function (svg) {
-                    svg.setAttribute("shape-rendering", "crispEdges");
-                    svg.setAttribute("vector-effect", "non-scaling-stroke");
-                  });
-                  if (window.OfflineTextRenderer) {
-                    window.OfflineTextRenderer.renderAll(document, ".hd-text[data-text]");
-                  }
-                })();
-              </script>
-            <?php endif; ?>
-          </div>
-        <?php endif; ?>
       <?php elseif ($menu === 'nameplate'): ?>
         <div class="topbar">
           <h1>Print Nameplate Barcode</h1>
@@ -4710,6 +4685,22 @@ if ($recordType === 'nameplate') {
         <div class="topbar">
           <h1>Record Print</h1>
           <p>Pilih jenis record yang ingin dilihat: PCB atau Nameplate.</p>
+        </div>
+
+        <!-- CARD DOWNLOAD RECORD EXCEL (20 BATCH / RANGE) -->
+        <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.35); background: linear-gradient(135deg, rgba(16, 185, 129, 0.05) 0%, rgba(18, 57, 104, 0.08) 100%);">
+          <div class="step-title" style="color: #10b981;">
+            <span class="icon" style="background: #10b981; color: #fff;">&#128196;</span>
+            Download Record Range Excel (20 Batch / 20.000 Nomor)
+          </div>
+          <p style="margin-top: 6px; margin-bottom: 14px; color: var(--content-muted); font-size: 13px; line-height: 1.5;">
+            Unduh laporan cetak barcode format Excel per 20 Batch (~20.000 barcode) atau rentang kustom sesuai format lembar QC fisik produksi. Anda dapat memilih rentang Batch Awal s/d Batch Akhir sebelum mengunduh.
+          </p>
+          <div>
+            <button type="button" onclick="openExcelExportModal('pcb')" class="primary" style="background: #10b981; border: 1px solid #10b981; color: #fff; padding: 10px 22px; border-radius: 999px; font-weight: bold; cursor: pointer; display: inline-flex; align-items: center; gap: 8px;">
+              &#128196; Buka Form Download Excel (20 Batch)
+            </button>
+          </div>
         </div>
 
         <div class="card">
@@ -5334,7 +5325,7 @@ if ($recordType === 'nameplate') {
             Manajemen Custom Text EV Charger
           </div>
           <p style="margin-top: 0; margin-bottom: 14px; font-size: 13px; color: var(--content-muted);">
-            Daftar pilihan dropdown Custom Text yang tersedia di halaman <strong>Print PCB EV Charger</strong>. Anda dapat menambah dan menghapus pilihan custom text di sini.
+            Daftar pilihan dropdown WO Number & Custom Text yang tersedia di halaman <strong>Print PCB EV Charger</strong>. Anda dapat menambah dan menghapus pilihan di sini.
           </p>
 
           <div style="overflow-x: auto; margin-bottom: 20px;">
@@ -7544,6 +7535,7 @@ if ($recordType === 'nameplate') {
       initAllModules();
     }
   </script>
+  <?php include 'export_record_modal.php'; ?>
 </body>
 </html>
 

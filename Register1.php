@@ -10,10 +10,7 @@ if (isset($_SESSION['username'])) {
     exit;
 }
 
-$koneksi = new mysqli("192.168.88.254:3307", "root", "", "test");
-if ($koneksi->connect_errno) {
-    die("Koneksi gagal: " . $koneksi->connect_error);
-}
+require_once __DIR__ . '/db_config.php';
 
 $error = '';
 $success = '';

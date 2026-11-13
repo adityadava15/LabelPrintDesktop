@@ -1,5 +1,5 @@
 <?php
-$koneksi = new mysqli("localhost", "root", "", "test");
+require_once __DIR__ . '/db_config.php';
 
 // Ambil daftar batch
 $batches = $koneksi->query("SELECT * FROM batch ORDER BY id ASC");
@@ -26,29 +26,28 @@ if (isset($_POST['batch_id'])) {
 }
 ?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
 <head>
-    <head>
   <meta charset="UTF-8">
   <title>Dashboard Barcode</title>
   <link rel="icon" type="image/png" sizes="32x32" href="IMG/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="IMG/favicon-16x16.png">
   <link rel="shortcut icon" href="IMG/favicon.ico">
   <link rel="apple-touch-icon" sizes="180x180" href="IMG/apple-touch-icon.png">
-  <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+  <link rel="stylesheet" href="CSS/app-print-modal.css?v=<?= file_exists(__DIR__ . '/CSS/app-print-modal.css') ? filemtime(__DIR__ . '/CSS/app-print-modal.css') : time() ?>">
+  <script src="JS2/JsBarcode.all.min.js"></script>
+  <script src="JS2/app-print-modal.js?v=<?= file_exists(__DIR__ . '/JS2/app-print-modal.js') ? filemtime(__DIR__ . '/JS2/app-print-modal.js') : time() ?>"></script>
   <style>
-    body { font-family: Arial, sans-serif; padding:20px; }
-    form { margin-bottom:20px; }
-    .card { border:1px solid #ddd; padding:15px; border-radius:10px; margin-bottom:20px; }
-    .barcode-container { display:flex; flex-wrap:wrap; gap:15px; margin-top:15px; }
-    .barcode-box { border:1px solid #ccc; padding:10px; border-radius:6px; text-align:center; }
-    span.msg { margin-left:10px; font-weight:bold; }
-    span.success { color:green; }
-    span.info { color:blue; }
-    span.error { color:red; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; padding: 24px; background: #0f172a; color: #f8fafc; }
+    form { margin-bottom: 24px; }
+    select, button { padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+    select { background: #1e293b; color: #f8fafc; border: 1px solid #334155; }
+    button { background: #2563eb; color: #fff; border: none; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    .card { border: 1px solid #334155; padding: 20px; border-radius: 12px; background: #1e293b; margin-bottom: 20px; }
+    .barcode-container { display: flex; flex-wrap: wrap; gap: 15px; margin: 20px 0; }
+    .barcode-box { background: #ffffff; color: #000; border: 1px solid #cbd5e1; padding: 10px; border-radius: 8px; text-align: center; }
   </style>
-</head>
-
 </head>
 <body>
     <h2>Pilih Batch untuk Cetak Barcode</h2>
@@ -68,21 +67,38 @@ if (isset($_POST['batch_id'])) {
         <h3>Preview (9 Nomor Awal & 9 Nomor Akhir)</h3>
         <div class="barcode-container">
             <?php foreach ($barcodes as $i => $code): ?>
-                <div class="barcode">
+                <div class="barcode-box">
                     <svg id="barcode<?= $i ?>"></svg>
-                    <p><?= htmlspecialchars($code) ?></p>
+                    <p style="margin: 4px 0 0 0; font-size: 12px; font-weight: bold;"><?= htmlspecialchars($code) ?></p>
                     <script>
                         JsBarcode("#barcode<?= $i ?>", "<?= $code ?>", {
                             format: "CODE128",
                             displayValue: false,
                             width: 2,
-                            height: 60
+                            height: 50
                         });
                     </script>
                 </div>
             <?php endforeach; ?>
         </div>
-        <button onclick="window.print()">🖨 Print</button>
+        <button type="button" onclick="openPrintStudio()">🖨 Pratinjau & Cetak Sekarang</button>
+
+        <script>
+        function openPrintStudio() {
+          var containerHtml = document.querySelector('.barcode-container').outerHTML;
+          window.AppPrinter.open({
+            title: "Cetak Barcode Preview Batch",
+            badge: "Format Standard",
+            totalLabels: <?= count($barcodes) ?>,
+            totalPages: 1,
+            html: containerHtml,
+            css: `
+              .barcode-container { display: flex; flex-wrap: wrap; gap: 10px; padding: 15px; }
+              .barcode-box { border: 1px solid #ccc; padding: 8px; text-align: center; }
+            `
+          });
+        }
+        </script>
     <?php endif; ?>
 </body>
 </html>

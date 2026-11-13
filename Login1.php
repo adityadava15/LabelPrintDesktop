@@ -1,6 +1,12 @@
 <!-- login.php -->
 <?php
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
+if (isset($_SESSION['app_mode']) && $_SESSION['app_mode'] === 'offline') {
+    header("Location: userview.php?menu=custom");
+    exit;
+}
 if (isset($_SESSION['username'])) {
     if ($_SESSION['role'] === 'admin') {
         header("Location: view.php");
@@ -10,10 +16,7 @@ if (isset($_SESSION['username'])) {
     exit;
 }
 
-$koneksi = new mysqli("192.168.88.254:3307", "root", "", "test");
-if ($koneksi->connect_errno) {
-    die("Koneksi gagal: " . $koneksi->connect_error);
-}
+require_once __DIR__ . '/db_config.php';
 
 $error = '';
 if (isset($_POST['login'])) {
@@ -304,7 +307,7 @@ if (isset($_POST['login'])) {
           </div>
 
           <div class="form-note">
-            <a href="Register1.php">Butuh akun?</a>
+            <a href="Register1.php">Butuh akun?</a> &bull; <a href="mode_select.php?choose=offline" style="color: #34d399; font-weight: 600;">⚡ Mode Offline</a> &bull; <a href="db_setup.php" title="Atur koneksi MySQL">⚙️ Database</a>
           </div>
 
           <button class="login-button" type="submit" name="login">Log in</button>
