@@ -196,6 +196,17 @@
       '          </button>',
       '          <div id="appPrintDefaultInfoNote" class="app-print-default-note">Hanya untuk software ini • Tidak mengubah default printer di Windows</div>',
       '        </div>',
+      '        <div class="app-print-safety-strip">',
+      '          <div class="app-print-safety-strip-head">',
+      '            <span><span class="app-print-safety-strip-dot"></span>🛡️ Safety Auto-Cancel Guard</span>',
+      '            <span style="color:#34d399;font-size:10.5px;">AKTIF</span>',
+      '          </div>',
+      '          <div class="app-print-safety-strip-desc">Otomatis membatalkan job print jika tombol Start/Pause printer terpijit atau printer mati/terputus.</div>',
+      '          <div class="app-print-safety-sim-row">',
+      '            <button type="button" id="appPrintBtnSimPause" class="app-print-safety-sim-btn" title="Uji simulasi jika print terhenti karena tombol Start/Pause di printer terpijit">⏸️ Uji Tombol Pause</button>',
+      '            <button type="button" id="appPrintBtnSimOffline" class="app-print-safety-sim-btn is-offline-sim" title="Uji simulasi jika printer mati / tidak terdeteksi">🔌 Uji Printer Mati</button>',
+      '          </div>',
+      '        </div>',
       '      </div>',
       '',
       '      <!-- 2. Copies -->',
@@ -317,6 +328,27 @@
         if (printerName) {
           AppPrinter.setAsDefault(printerName);
         }
+      });
+    }
+
+    // 1c. Tombol Uji Simulasi Safety Auto-Cancel
+    var btnSimPause = document.getElementById("appPrintBtnSimPause");
+    if (btnSimPause) {
+      btnSimPause.addEventListener("click", function () {
+        var select = document.getElementById("appPrintPrinterSelect");
+        var pName = (select && select.value) ? select.value : (selectedPrinter ? selectedPrinter.name : "Printer Label");
+        var pPort = (selectedPrinter && selectedPrinter.port) ? selectedPrinter.port : "USB001";
+        AppPrinter.triggerSafetySimulation("PRINTER_PAUSED_OR_STOPPED", pName, pPort);
+      });
+    }
+
+    var btnSimOffline = document.getElementById("appPrintBtnSimOffline");
+    if (btnSimOffline) {
+      btnSimOffline.addEventListener("click", function () {
+        var select = document.getElementById("appPrintPrinterSelect");
+        var pName = (select && select.value) ? select.value : (selectedPrinter ? selectedPrinter.name : "Printer Label");
+        var pPort = (selectedPrinter && selectedPrinter.port) ? selectedPrinter.port : "USB001";
+        AppPrinter.triggerSafetySimulation("PRINTER_OFFLINE", pName, pPort);
       });
     }
 
@@ -989,6 +1021,17 @@
       fetch("api_printers.php", { method: "POST", body: fd })
         .then(function (res) { return res.json(); })
         .then(function (data) {
+          if (data && data.safety_triggered) {
+            if (btnLabel) btnLabel.textContent = "⛔ Job Print Di-Cancel";
+            var statusErr = document.getElementById("appPrintPrinterStatusDesc");
+            if (statusErr) {
+              statusErr.className = "app-print-status-hint offline";
+              statusErr.textContent = "⛔ Safety Auto-Cancel: Job print telah dibatalkan otomatis.";
+            }
+            AppPrinter.showSafetyWarningModal(data);
+            return;
+          }
+
           if (data && data.success) {
             if (btnLabel) {
               btnLabel.textContent = "✓ Terkirim ke Printer (" + (data.pages || activeSheetIndices.length) + " hal)";
@@ -996,8 +1039,10 @@
             var statusDesc = document.getElementById("appPrintPrinterStatusDesc");
             if (statusDesc) {
               statusDesc.className = "app-print-status-hint";
-              statusDesc.textContent = "✓ Perintah cetak berhasil dikirim langsung ke: " + (data.printer || targetPrinterName);
+              statusDesc.textContent = "✓ Perintah cetak dikirim ke: " + (data.printer || targetPrinterName) + " (Safety Guard Memantau...)";
             }
+            // Pantau antrean selama proses cetak berlangsung: jika tombol Start/Pause dipijit atau printer mati di tengah jalan -> Auto-Cancel!
+            AppPrinter.startActiveJobWatchdog(data.printer || targetPrinterName, 14000);
           } else {
             var errMsg = (data && data.error) ? data.error : "Gagal mengirim perintah cetak ke printer.";
             alert("Gagal Mencetak: " + errMsg);
@@ -1019,6 +1064,308 @@
             }
           }, 1100);
         });
+    },
+
+    /**
+     * Memantau antrean spooler & status hardware printer secara aktif selama job berjalan
+     */
+    startActiveJobWatchdog: function (printerName, durationMs) {
+      if (!printerName) return;
+      if (this._safetyWatchTimer) {
+        clearInterval(this._safetyWatchTimer);
+        this._safetyWatchTimer = null;
+      }
+
+      var startTime = Date.now();
+      var maxDuration = durationMs || 14000;
+      var isChecking = false;
+
+      this._safetyWatchTimer = setInterval(function () {
+        if (isChecking) return;
+        if (Date.now() - startTime > maxDuration) {
+          clearInterval(AppPrinter._safetyWatchTimer);
+          AppPrinter._safetyWatchTimer = null;
+          return;
+        }
+
+        isChecking = true;
+        var fd = new FormData();
+        fd.append("action", "safety_watch");
+        fd.append("printer", printerName);
+        fd.append("active", "0");
+
+        fetch("api_printers.php", { method: "POST", body: fd })
+          .then(function (r) { return r.json(); })
+          .then(function (wData) {
+            isChecking = false;
+            if (wData && wData.safety_triggered) {
+              clearInterval(AppPrinter._safetyWatchTimer);
+              AppPrinter._safetyWatchTimer = null;
+              AppPrinter.showSafetyWarningModal(wData);
+            } else if (wData && wData.active_jobs === 0 && (Date.now() - startTime > 3000)) {
+              // Semua halaman sudah selesai tercetak dengan aman
+              clearInterval(AppPrinter._safetyWatchTimer);
+              AppPrinter._safetyWatchTimer = null;
+            }
+          })
+          .catch(function () {
+            isChecking = false;
+          });
+      }, 650);
+    },
+
+    /**
+     * Membunyikan nada peringatan safety menggunakan Web Audio API
+     */
+    playSafetyWarningTone: function (isOffline) {
+      try {
+        var AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        var ctx = new AudioCtx();
+        var freqs = isOffline ? [980, 740, 980, 740] : [880, 1180, 880];
+        var startAt = ctx.currentTime + 0.02;
+
+        for (var i = 0; i < freqs.length; i++) {
+          var osc = ctx.createOscillator();
+          var gain = ctx.createGain();
+          osc.type = "triangle";
+          osc.frequency.value = freqs[i];
+
+          var t0 = startAt + (i * 0.22);
+          var t1 = t0 + 0.16;
+          gain.gain.setValueAtTime(0.001, t0);
+          gain.gain.exponentialRampToValueAtTime(0.28, t0 + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.001, t1);
+
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(t0);
+          osc.stop(t1);
+        }
+      } catch (e) {}
+    },
+
+    /**
+     * Membuat elemen DOM untuk Pop-up Modal Warning Safety Auto-Cancel
+     */
+    ensureSafetyModalDOM: function () {
+      var existing = document.getElementById("appPrintSafetyModalOverlay");
+      if (existing) return existing;
+      if (!document.body) return null;
+
+      var wrap = document.createElement("div");
+      wrap.id = "appPrintSafetyModalOverlay";
+      wrap.setAttribute("role", "alertdialog");
+      wrap.setAttribute("aria-modal", "true");
+
+      wrap.innerHTML = [
+        '<div class="app-safety-modal-dialog" id="appSafetyModalDialog">',
+        '  <div class="app-safety-top-bar">',
+        '    <div class="app-safety-icon-orb" id="appSafetyIconOrb">⏸️</div>',
+        '    <div class="app-safety-head-texts">',
+        '      <div class="app-safety-tag-pill" id="appSafetyTagPill">🛡️ SISTEM SAFETY PROTEKSI CETAK</div>',
+        '      <h3 class="app-safety-title" id="appSafetyTitle">JOB PRINT OTOMATIS DI-CANCEL!</h3>',
+        '      <p class="app-safety-subtitle" id="appSafetySubtitle">Perintah cetak telah dihentikan dan dihapus dari antrean printer.</p>',
+        '    </div>',
+        '  </div>',
+        '  <div class="app-safety-body">',
+        '    <div class="app-safety-cancel-banner">',
+        '      <div class="app-safety-cancel-left">',
+        '        <div class="app-safety-cancel-check">✓</div>',
+        '        <div>',
+        '          <div class="app-safety-cancel-heading">Job yang Diperintahkan Ngeprint Sudah Di-Cancel Otomatis</div>',
+        '          <div class="app-safety-cancel-sub">Antrean Windows Spooler telah dibersihkan agar tidak mencetak ulang / duplikasi nomor seri.</div>',
+        '        </div>',
+        '      </div>',
+        '      <div class="app-safety-cancel-stamp">JOB CANCELLED</div>',
+        '    </div>',
+        '    <div class="app-safety-metrics-grid">',
+        '      <div class="app-safety-metric-card">',
+        '        <div class="app-safety-metric-label">Status Perintah Cetak</div>',
+        '        <div class="app-safety-metric-value" style="color:#f87171;" id="appSafetyMetricStatus">DI-CANCEL OTOMATIS</div>',
+        '      </div>',
+        '      <div class="app-safety-metric-card">',
+        '        <div class="app-safety-metric-label">Printer & Port</div>',
+        '        <div class="app-safety-metric-value" id="appSafetyMetricPrinter">-</div>',
+        '      </div>',
+        '      <div class="app-safety-metric-card">',
+        '        <div class="app-safety-metric-label">Waktu & Dokumen</div>',
+        '        <div class="app-safety-metric-value" id="appSafetyMetricJob">-</div>',
+        '      </div>',
+        '    </div>',
+        '    <div class="app-safety-reason-box">',
+        '      <div class="app-safety-section-title">⚠️ Penyebab Auto-Cancel Terdeteksi:</div>',
+        '      <p class="app-safety-reason-text" id="appSafetyReasonText">-</p>',
+        '    </div>',
+        '    <div class="app-safety-reason-box">',
+        '      <div class="app-safety-section-title">🛠️ Panduan Pemulihan sebelum Mencetak Kembali:</div>',
+        '      <ol class="app-safety-steps-list" id="appSafetyStepsList"></ol>',
+        '    </div>',
+        '  </div>',
+        '  <div class="app-safety-footer">',
+        '    <button type="button" class="app-safety-btn-secondary" id="appSafetyBtnPurge">🔄 Pastikan Antrean Kosong</button>',
+        '    <button type="button" class="app-safety-btn-primary" id="appSafetyBtnAck">✓ Mengerti, Tutup Peringatan</button>',
+        '  </div>',
+        '</div>'
+      ].join("\n");
+
+      document.body.appendChild(wrap);
+
+      var btnAck = document.getElementById("appSafetyBtnAck");
+      if (btnAck) {
+        btnAck.addEventListener("click", function () {
+          AppPrinter.closeSafetyWarningModal();
+        });
+      }
+
+      var btnPurge = document.getElementById("appSafetyBtnPurge");
+      if (btnPurge) {
+        btnPurge.addEventListener("click", function () {
+          var pName = wrap.getAttribute("data-printer") || "";
+          btnPurge.textContent = "Membersihkan Antrean...";
+          var fd = new FormData();
+          fd.append("action", "purge_jobs");
+          fd.append("printer", pName);
+          fetch("api_printers.php", { method: "POST", body: fd })
+            .then(function () {
+              btnPurge.textContent = "✓ Antrean Printer 100% Bersih";
+              AppPrinter.loadPrinters();
+              if (typeof global.updateStudioPrinterStatus === "function") {
+                global.updateStudioPrinterStatus();
+              }
+            })
+            .catch(function () {
+              btnPurge.textContent = "🔄 Pastikan Antrean Kosong";
+            });
+        });
+      }
+
+      return wrap;
+    },
+
+    /**
+     * Menampilkan Pop-up Modal Warning ketika Safety Auto-Cancel membatalkan job print
+     */
+    showSafetyWarningModal: function (safetyData) {
+      var modal = this.ensureSafetyModalDOM();
+      if (!modal) return;
+
+      var data = safetyData || {};
+      var code = String(data.safety_code || "PRINTER_PAUSED_OR_STOPPED");
+      var isOffline = (code === "PRINTER_OFFLINE");
+      var printerName = data.printer || (selectedPrinter ? selectedPrinter.name : "Printer Label");
+      var portName = data.port || (selectedPrinter && selectedPrinter.port ? selectedPrinter.port : "USB");
+      var cancelledCount = data.cancelled_jobs || 1;
+      var timeStr = data.timestamp || new Date().toLocaleTimeString("id-ID");
+
+      modal.setAttribute("data-printer", printerName);
+
+      var dialog = document.getElementById("appSafetyModalDialog");
+      var orb = document.getElementById("appSafetyIconOrb");
+      var pill = document.getElementById("appSafetyTagPill");
+      var title = document.getElementById("appSafetyTitle");
+      var subtitle = document.getElementById("appSafetySubtitle");
+      var metricStatus = document.getElementById("appSafetyMetricStatus");
+      var metricPrinter = document.getElementById("appSafetyMetricPrinter");
+      var metricJob = document.getElementById("appSafetyMetricJob");
+      var reasonText = document.getElementById("appSafetyReasonText");
+      var stepsList = document.getElementById("appSafetyStepsList");
+      var btnPurge = document.getElementById("appSafetyBtnPurge");
+
+      if (btnPurge) {
+        btnPurge.textContent = "🔄 Pastikan Antrean Kosong";
+      }
+
+      if (dialog) {
+        if (isOffline) {
+          dialog.classList.add("is-offline-mode");
+        } else {
+          dialog.classList.remove("is-offline-mode");
+        }
+      }
+
+      if (isOffline) {
+        if (orb) orb.textContent = "🔌";
+        if (pill) pill.textContent = "🔌 SAFETY INTERLOCK: PRINTER MATI / TIDAK TERDETEKSI";
+        if (title) title.textContent = "PRINTER MATI / TERPUTUS — JOB PRINT SUDAH DI-CANCEL!";
+        if (subtitle) subtitle.textContent = "Printer tidak terdeteksi atau dalam kondisi mati saat perintah cetak dijalankan.";
+      } else {
+        if (orb) orb.textContent = "⏸️";
+        if (pill) pill.textContent = "⏸️ SAFETY INTERLOCK: TOMBOL START / PAUSE PRINTER";
+        if (title) title.textContent = "PRINT TERHENTI DI PRINTER — JOB PRINT SUDAH DI-CANCEL!";
+        if (subtitle) subtitle.textContent = "Terdeteksi cetakan terhenti karena tombol Start / Pause pada printer terpijit atau intervensi perangkat.";
+      }
+
+      if (metricStatus) {
+        metricStatus.textContent = "SUDAH DI-CANCEL (" + cancelledCount + " Job Dihapus)";
+      }
+      if (metricPrinter) {
+        metricPrinter.textContent = printerName + (portName ? " (" + portName + ")" : "");
+      }
+      if (metricJob) {
+        metricJob.textContent = timeStr + " • " + (data.cancelled_documents || "PCB Barcode Print");
+      }
+      if (reasonText) {
+        reasonText.textContent = data.reason || (isOffline
+          ? "Printer mati atau kabel koneksi tidak terdeteksi. Job print yang diperintahkan telah dibatalkan otomatis."
+          : "Proses print terhenti karena tombol Start/Pause pada printer tertekan. Job print yang diperintahkan telah dibatalkan otomatis.");
+      }
+
+      if (stepsList) {
+        if (isOffline) {
+          stepsList.innerHTML = [
+            "<li>Pastikan saklar power printer dalam posisi <strong>ON</strong> dan kabel USB/koneksi terpasang dengan benar.</li>",
+            "<li>Tunggu hingga lampu indikator printer menyala <strong>Ready (Hijau)</strong>.</li>",
+            "<li>Karena job print sebelumnya <strong>sudah di-cancel otomatis</strong>, printer aman dan tidak akan mencetak sendiri saat menyala.</li>",
+            "<li>Periksa nomor barcode fisik terakhir yang sudah tercetak, lalu kirim perintah cetak ulang dari software.</li>"
+          ].join("");
+        } else {
+          stepsList.innerHTML = [
+            "<li>Periksa tombol <strong>Start / Pause / Feed</strong> pada fisik printer dan pastikan lampu indikator tidak berkedip (kembali <strong>Hijau Solid / Ready</strong>).</li>",
+            "<li>Periksa posisi roll sticker label dan ribbon agar sensor tidak tertahan.</li>",
+            "<li>Job print yang tadi diperintahkan <strong>sudah di-cancel otomatis</strong> sehingga tidak akan melanjutkan cetakan yang berisiko duplikat.</li>",
+            "<li>Cek nomor seri barcode terakhir yang berhasil keluar, lalu lakukan print ulang mulai dari nomor berikutnya.</li>"
+          ].join("");
+        }
+      }
+
+      modal.classList.add("is-open");
+      this.playSafetyWarningTone(isOffline);
+    },
+
+    closeSafetyWarningModal: function () {
+      var modal = document.getElementById("appPrintSafetyModalOverlay");
+      if (modal) {
+        modal.classList.remove("is-open");
+      }
+      this.loadPrinters();
+      if (typeof global.updateStudioPrinterStatus === "function") {
+        global.updateStudioPrinterStatus();
+      }
+    },
+
+    /**
+     * Menjalankan simulasi uji Safety Auto-Cancel sekaligus membersihkan antrean spooler nyata jika ada
+     */
+    triggerSafetySimulation: function (safetyCode, printerName, portName) {
+      var isOffline = (safetyCode === "PRINTER_OFFLINE");
+      var fd = new FormData();
+      fd.append("action", "purge_jobs");
+      fd.append("printer", printerName);
+      fetch("api_printers.php", { method: "POST", body: fd }).catch(function () {});
+
+      this.showSafetyWarningModal({
+        safety_triggered: true,
+        safety_code: safetyCode,
+        printer: printerName,
+        port: portName,
+        cancelled_jobs: 1,
+        cancelled_documents: (currentConfig && currentConfig.title) ? currentConfig.title : "PCB Barcode Print",
+        timestamp: new Date().toLocaleTimeString("id-ID"),
+        reason: isOffline
+          ? "Printer '" + printerName + "' terdeteksi MATI (Power OFF) atau tidak terdeteksi pada port " + portName + ". Job print yang diperintahkan telah di-cancel otomatis dari antrean spooler."
+          : "Proses print pada '" + printerName + "' terhenti karena tombol Start / Pause di printer terpijit (Status: Printer Paused / Interrupted). Job print yang diperintahkan telah di-cancel otomatis dari antrean spooler."
+      });
     },
 
     close: function () {

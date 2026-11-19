@@ -306,7 +306,7 @@ if ($action === 'direct_print') {
     @unlink($tempHtmlFile);
 
     $parsed = @json_decode(trim((string)$cmdOutput), true);
-    if (is_array($parsed) && isset($parsed['success'])) {
+    if (is_array($parsed) && (isset($parsed['success']) || isset($parsed['safety_triggered']))) {
         echo json_encode($parsed, JSON_UNESCAPED_UNICODE);
     } else {
         echo json_encode([
@@ -317,7 +317,70 @@ if ($action === 'direct_print') {
     exit;
 }
 
-// 4. Action: 'list' (Default)
+// 5. Safety Watchdog: Pantau real-time apakah print terhenti karena tombol Start/Pause printer atau printer mati/terputus -> Auto-Cancel Job
+if ($action === 'safety_watch') {
+    $printerName = isset($_REQUEST['printer']) ? trim($_REQUEST['printer']) : '';
+    $activeWatch = !empty($_REQUEST['active']) ? '1' : '0';
+
+    if ($printerName === '') {
+        $cfg = loadPrinterConfig();
+        $printerName = trim((string)($cfg['app_default_printer'] ?? ''));
+        if ($printerName === '') {
+            $printerName = getCurrentWindowsDefaultPrinter();
+        }
+    }
+
+    if ($printerName === '') {
+        echo json_encode(['success' => true, 'safety_triggered' => false, 'active_jobs' => 0]);
+        exit;
+    }
+
+    $directPrintExe = __DIR__ . DIRECTORY_SEPARATOR . 'DirectPrint.exe';
+    if (!file_exists($directPrintExe)) {
+        echo json_encode(['success' => true, 'safety_triggered' => false, 'active_jobs' => 0]);
+        exit;
+    }
+
+    $safeExe = '"' . $directPrintExe . '"';
+    $safePrinter = '"' . str_replace('"', '\"', $printerName) . '"';
+    $cmdOutput = @shell_exec("$safeExe --watch $safePrinter $activeWatch 2>&1");
+
+    $parsed = @json_decode(trim((string)$cmdOutput), true);
+    if (is_array($parsed)) {
+        echo json_encode($parsed, JSON_UNESCAPED_UNICODE);
+    } else {
+        echo json_encode(['success' => true, 'safety_triggered' => false, 'active_jobs' => 0]);
+    }
+    exit;
+}
+
+// 6. Manual Emergency Purge: Batalkan seluruh job pada printer terpilih
+if ($action === 'purge_jobs') {
+    $printerName = isset($_REQUEST['printer']) ? trim($_REQUEST['printer']) : '';
+    if ($printerName === '') {
+        $cfg = loadPrinterConfig();
+        $printerName = trim((string)($cfg['app_default_printer'] ?? ''));
+        if ($printerName === '') {
+            $printerName = getCurrentWindowsDefaultPrinter();
+        }
+    }
+
+    $directPrintExe = __DIR__ . DIRECTORY_SEPARATOR . 'DirectPrint.exe';
+    if ($printerName !== '' && file_exists($directPrintExe)) {
+        $safeExe = '"' . $directPrintExe . '"';
+        $safePrinter = '"' . str_replace('"', '\"', $printerName) . '"';
+        $cmdOutput = @shell_exec("$safeExe --purge $safePrinter 2>&1");
+        $parsed = @json_decode(trim((string)$cmdOutput), true);
+        if (is_array($parsed)) {
+            echo json_encode($parsed, JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    }
+    echo json_encode(['success' => true, 'purged_jobs' => 0]);
+    exit;
+}
+
+// 7. Action: 'list' (Default)
 restorePendingWindowsDefaultPrinter(false);
 
 $printerCfg = loadPrinterConfig();

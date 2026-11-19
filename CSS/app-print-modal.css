@@ -574,3 +574,382 @@
   color: #64748b;
   margin-top: 3px;
 }
+
+/* ==========================================================================
+   PRINT SAFETY SYSTEM - AUTO-CANCEL WARNING MODAL & SIDEBAR SHIELD
+   ========================================================================== */
+
+.app-print-safety-strip {
+  margin-top: 10px;
+  background: rgba(15, 23, 42, 0.75);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.app-print-safety-strip-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #38bdf8;
+  margin-bottom: 4px;
+}
+
+.app-print-safety-strip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #10b981;
+  box-shadow: 0 0 8px #10b981;
+  display: inline-block;
+  margin-right: 5px;
+}
+
+.app-print-safety-strip-desc {
+  font-size: 10.5px;
+  color: #94a3b8;
+  line-height: 1.35;
+}
+
+.app-print-safety-sim-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.app-print-safety-sim-btn {
+  flex: 1;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #cbd5e1;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 5px 6px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.app-print-safety-sim-btn:hover {
+  background: rgba(245, 158, 11, 0.18);
+  border-color: rgba(245, 158, 11, 0.5);
+  color: #fde68a;
+}
+
+.app-print-safety-sim-btn.is-offline-sim:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: #fecaca;
+}
+
+/* Safety Warning Modal Overlay */
+#appPrintSafetyModalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000050;
+  background: rgba(6, 10, 19, 0.88);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+#appPrintSafetyModalOverlay.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.app-safety-modal-dialog {
+  width: 650px;
+  max-width: 95vw;
+  max-height: 92vh;
+  overflow-y: auto;
+  background: linear-gradient(165deg, #131926 0%, #0d121d 100%);
+  border: 1.5px solid rgba(245, 158, 11, 0.45);
+  border-radius: 18px;
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.75), 0 0 40px rgba(239, 68, 68, 0.18);
+  color: #f8fafc;
+  position: relative;
+  animation: appSafetyPopIn 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-safety-modal-dialog.is-offline-mode {
+  border-color: rgba(239, 68, 68, 0.55);
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.8), 0 0 48px rgba(239, 68, 68, 0.28);
+}
+
+@keyframes appSafetyPopIn {
+  from {
+    transform: scale(0.93) translateY(12px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes appSafetyPulseGlow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+}
+
+.app-safety-top-bar {
+  padding: 20px 24px 18px;
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.22) 0%, rgba(180, 83, 9, 0.06) 100%);
+  border-bottom: 1px solid rgba(245, 158, 11, 0.25);
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.app-safety-modal-dialog.is-offline-mode .app-safety-top-bar {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.25) 0%, rgba(153, 27, 27, 0.08) 100%);
+  border-bottom-color: rgba(239, 68, 68, 0.28);
+}
+
+.app-safety-icon-orb {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  background: rgba(245, 158, 11, 0.18);
+  border: 1.5px solid rgba(251, 191, 36, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 25px;
+  flex-shrink: 0;
+  animation: appSafetyPulseGlow 1.8s infinite;
+}
+
+.app-safety-modal-dialog.is-offline-mode .app-safety-icon-orb {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(248, 113, 113, 0.55);
+}
+
+.app-safety-head-texts {
+  flex: 1;
+  min-width: 0;
+}
+
+.app-safety-tag-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.22);
+  color: #fcd34d;
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  margin-bottom: 7px;
+}
+
+.app-safety-modal-dialog.is-offline-mode .app-safety-tag-pill {
+  background: rgba(239, 68, 68, 0.22);
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.45);
+}
+
+.app-safety-title {
+  margin: 0 0 4px 0;
+  font-size: 18px;
+  font-weight: 800;
+  color: #ffffff;
+  line-height: 1.28;
+  letter-spacing: -0.01em;
+}
+
+.app-safety-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #cbd5e1;
+  line-height: 1.45;
+}
+
+.app-safety-body {
+  padding: 20px 24px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Big Cancel Status Banner */
+.app-safety-cancel-banner {
+  background: rgba(16, 185, 129, 0.11);
+  border: 1px solid rgba(16, 185, 129, 0.38);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.app-safety-cancel-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-safety-cancel-check {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: rgba(16, 185, 129, 0.22);
+  color: #34d399;
+  font-size: 18px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.app-safety-cancel-heading {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #6ee7b7;
+  margin: 0 0 2px 0;
+}
+
+.app-safety-cancel-sub {
+  font-size: 12px;
+  color: #a7f3d0;
+  margin: 0;
+}
+
+.app-safety-cancel-stamp {
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 5px 11px;
+  border-radius: 7px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  box-shadow: 0 2px 10px rgba(220, 38, 38, 0.45);
+}
+
+/* Telemetry 3-Column Metrics */
+.app-safety-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.app-safety-metric-card {
+  background: rgba(30, 41, 59, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+
+.app-safety-metric-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.app-safety-metric-value {
+  font-size: 13px;
+  font-weight: 700;
+  color: #f1f5f9;
+  word-break: break-word;
+}
+
+/* Reason & Steps Section */
+.app-safety-reason-box {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 13px 15px;
+}
+
+.app-safety-section-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #e2e8f0;
+  margin: 0 0 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.app-safety-reason-text {
+  font-size: 12.5px;
+  color: #cbd5e1;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.app-safety-steps-list {
+  margin: 6px 0 0 0;
+  padding-left: 18px;
+  font-size: 12.2px;
+  color: #cbd5e1;
+  line-height: 1.65;
+}
+
+.app-safety-footer {
+  padding: 14px 24px 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.app-safety-btn-secondary {
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #e2e8f0;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 16px;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.app-safety-btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+}
+
+.app-safety-btn-primary {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border: none;
+  color: #ffffff;
+  font-size: 13.5px;
+  font-weight: 700;
+  padding: 10px 20px;
+  border-radius: 9px;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(37, 99, 235, 0.45);
+  transition: all 0.15s ease;
+}
+
+.app-safety-btn-primary:hover {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  transform: translateY(-1px);
+}
