@@ -1,7 +1,7 @@
 <?php
 /**
  * Master Distribution & Installer Builder
- * PCB Barcode Print v2.0
+ * PCB Barcode Print v2.4 (Studio Edition)
  */
 
 $root = __DIR__;
@@ -15,9 +15,59 @@ if (!is_dir($scratch)) {
     mkdir($scratch, 0777, true);
 }
 
+$cscPath = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe';
+
+echo "=========================================================\n";
+echo "    PCB BARCODE PRINT v2.4 - BUILDER DISTRIBUSI & SETUP   \n";
+echo "=========================================================\n\n";
+
+// 0. Kompilasi PCBBarcodePrint.exe dari Launcher.cs
 echo "---------------------------------------------------------\n";
-echo "1. Mempersiapkan dan mengompresi payload aplikasi...\n";
-echo "   (Mengabaikan cache browser 491 MB, git, dan file tes)\n";
+echo "0. Mengompilasi PCBBarcodePrint.exe dari Launcher.cs...\n";
+echo "---------------------------------------------------------\n";
+
+$launcherCs = $root . DIRECTORY_SEPARATOR . 'Launcher.cs';
+$appExe = $root . DIRECTORY_SEPARATOR . 'PCBBarcodePrint.exe';
+$appIcon = $root . DIRECTORY_SEPARATOR . 'IMG' . DIRECTORY_SEPARATOR . 'favicon.ico';
+$manifest = $root . DIRECTORY_SEPARATOR . 'app.manifest';
+
+if (file_exists($cscPath) && file_exists($launcherCs)) {
+    $cscAppCmd = "\"$cscPath\" /nologo /target:winexe /win32icon:\"$appIcon\" /win32manifest:\"$manifest\" " .
+                 "/out:\"$appExe\" /reference:System.dll,System.Windows.Forms.dll,System.Drawing.dll /optimize+ \"$launcherCs\"";
+    shell_exec($cscAppCmd);
+    if (file_exists($appExe)) {
+        $appSizeKb = round(filesize($appExe) / 1024, 1);
+        echo "   [✓] PCBBarcodePrint.exe berhasil dikompilasi ({$appSizeKb} KB)\n";
+    } else {
+        echo "   [!] Kompilasi Launcher.cs gagal, memeriksa file exe yang sudah ada...\n";
+    }
+} else {
+    echo "   [!] csc.exe atau Launcher.cs tidak ditemukan, melompati kompilasi launcher.\n";
+}
+
+$directPrintCs = $root . DIRECTORY_SEPARATOR . 'DirectPrint.cs';
+$directPrintExe = $root . DIRECTORY_SEPARATOR . 'DirectPrint.exe';
+if (file_exists($cscPath) && file_exists($directPrintCs)) {
+    $cscDirectCmd = "\"$cscPath\" /nologo /target:exe /out:\"$directPrintExe\" " .
+                    "/r:System.dll /r:System.Drawing.dll " .
+                    "/r:\"C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\System.Runtime.dll\" " .
+                    "/r:\"C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\System.Runtime.WindowsRuntime.dll\" " .
+                    "/r:\"C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\System.Runtime.InteropServices.WindowsRuntime.dll\" " .
+                    "/r:\"C:\\Windows\\System32\\WinMetadata\\Windows.Data.winmd\" " .
+                    "/r:\"C:\\Windows\\System32\\WinMetadata\\Windows.Foundation.winmd\" " .
+                    "/r:\"C:\\Windows\\System32\\WinMetadata\\Windows.Storage.winmd\" " .
+                    "/optimize+ \"$directPrintCs\"";
+    shell_exec($cscDirectCmd);
+    if (file_exists($directPrintExe)) {
+        $dpSizeKb = round(filesize($directPrintExe) / 1024, 1);
+        echo "   [✓] DirectPrint.exe berhasil dikompilasi ({$dpSizeKb} KB)\n\n";
+    }
+}
+
+// 1. Mempersiapkan dan mengompresi payload aplikasi
+echo "---------------------------------------------------------\n";
+echo "1. Mempersiapkan dan mengompresi payload aplikasi v2.4...\n";
+echo "   (Mengabaikan cache browser, git, pdb, dan file tes)\n";
 echo "---------------------------------------------------------\n";
 
 $payloadZip = $scratch . DIRECTORY_SEPARATOR . 'payload.zip';
@@ -30,6 +80,8 @@ if ($zip->open($payloadZip, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true
 
 $essentialFiles = [
     'PCBBarcodePrint.exe',
+    'DirectPrint.exe',
+    'DirectPrint.cs',
     'app.manifest',
     'index.php',
     'mode_select.php',
@@ -51,7 +103,9 @@ $essentialFiles = [
     'ev_charger_type_options.json',
     'favicon.ico',
     'PETUNJUK_PENGGUNAAN_DESKTOP.md',
-    'Buat Shortcut Desktop.bat'
+    'Buat Shortcut Desktop.bat',
+    'DAFTAR_PERBAIKAN.md',
+    'README.md'
 ];
 
 $essentialDirs = ['CSS', 'JS', 'JS2', 'IMG', 'php'];
@@ -59,7 +113,7 @@ $essentialDirs = ['CSS', 'JS', 'JS2', 'IMG', 'php'];
 foreach ($essentialFiles as $f) {
     $full = $root . DIRECTORY_SEPARATOR . $f;
     if (file_exists($full)) {
-        $zip->addFile($full, $f);
+        $zip->addFile($full, str_replace('\\', '/', $f));
     }
 }
 
@@ -80,29 +134,40 @@ foreach ($essentialDirs as $d) {
         if (strpos($relPath, 'tests') !== false) continue;
         if (strpos($relPath, '.bak') !== false) continue;
         if (strpos($relPath, '.phpt') !== false) continue;
+        if (strpos($relPath, '.pdb') !== false) continue;
 
-        $zip->addFile($filePath, $relPath);
+        // ZIP standard strictly requires forward slash for directories
+        $zipEntryName = str_replace('\\', '/', $relPath);
+        $zip->addFile($filePath, $zipEntryName);
     }
 }
 
 $zip->close();
 $zipSizeMb = round(filesize($payloadZip) / (1024 * 1024), 2);
-echo "   [✓] Payload terkompresi: {$zipSizeMb} MB (turun drastis dari 565 MB!)\n\n";
+echo "   [✓] Payload terkompresi: {$zipSizeMb} MB\n\n";
 
+// 2. Paket Portable (v2.4 dan v2.0 untuk kompatibilitas)
 echo "---------------------------------------------------------\n";
-echo "2. Membuat paket Portable (dist/PCBBarcodePrint_v2.0_Portable.zip)...\n";
+echo "2. Membuat paket Portable (dist/PCBBarcodePrint_v2.4_Portable.zip)...\n";
 echo "---------------------------------------------------------\n";
-$portableZip = $dist . DIRECTORY_SEPARATOR . 'PCBBarcodePrint_v2.0_Portable.zip';
-copy($payloadZip, $portableZip);
-echo "   [✓] Selesai: " . basename($portableZip) . " ({$zipSizeMb} MB)\n\n";
+$portableZip24 = $dist . DIRECTORY_SEPARATOR . 'PCBBarcodePrint_v2.4_Portable.zip';
+$portableZip20 = $dist . DIRECTORY_SEPARATOR . 'PCBBarcodePrint_v2.0_Portable.zip';
 
+copy($payloadZip, $portableZip24);
+copy($payloadZip, $portableZip20); // Alias untuk link lama
+echo "   [✓] Selesai: " . basename($portableZip24) . " ({$zipSizeMb} MB)\n";
+echo "   [✓] Selesai (alias kompatibilitas): " . basename($portableZip20) . "\n\n";
+
+// 3. Mengompilasi Installer Mandiri (dist/Setup_PCBBarcodePrint.exe)
 echo "---------------------------------------------------------\n";
-echo "3. Mengompilasi Installer Mandiri (dist/Setup_PCBBarcodePrint.exe)...\n";
+echo "3. Mengompilasi Installer Mandiri GUI (dist/Setup_PCBBarcodePrint.exe)...\n";
 echo "---------------------------------------------------------\n";
-$cscPath = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe';
 $setupExe = $dist . DIRECTORY_SEPARATOR . 'Setup_PCBBarcodePrint.exe';
 $installerCs = $root . DIRECTORY_SEPARATOR . 'Installer.cs';
-$iconPath = $root . DIRECTORY_SEPARATOR . 'favicon.ico';
+$iconPath = $root . DIRECTORY_SEPARATOR . 'IMG' . DIRECTORY_SEPARATOR . 'favicon.ico';
+$logoPng = $root . DIRECTORY_SEPARATOR . 'IMG' . DIRECTORY_SEPARATOR . 'apple-touch-icon.png';
+
+$logoRes = file_exists($logoPng) ? "/resource:\"$logoPng\",app_logo.png " : "";
 
 $cscCmd = "\"$cscPath\" /nologo /target:winexe /out:\"$setupExe\" " .
           "/win32icon:\"$iconPath\" " .
@@ -110,6 +175,7 @@ $cscCmd = "\"$cscPath\" /nologo /target:winexe /out:\"$setupExe\" " .
           "/r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll /r:Microsoft.CSharp.dll " .
           "/resource:\"$payloadZip\",payload.zip " .
           "/resource:\"$iconPath\",favicon.ico " .
+          $logoRes .
           "\"$installerCs\"";
 
 shell_exec($cscCmd);
@@ -121,6 +187,7 @@ if (file_exists($setupExe)) {
     echo "   [-] Gagal mengompilasi Installer C#.\n\n";
 }
 
+// 4. Membuat Installer Ultra-Compact 7z SFX
 echo "---------------------------------------------------------\n";
 echo "4. Membuat Installer Ultra-Compact 7z SFX (~17 MB)...\n";
 echo "---------------------------------------------------------\n";
@@ -131,12 +198,20 @@ if (file_exists($sevenZip) && file_exists($sfxModule)) {
     if (file_exists($temp7z)) @unlink($temp7z);
 
     $filesToArchive = implode(' ', array_map(function ($f) { return "\"$f\""; }, array_merge($essentialFiles, $essentialDirs)));
-    $cmd7z = "\"$sevenZip\" a -mx9 \"$temp7z\" $filesToArchive -xr!tests -xr!*.bak -xr!*.phpt >nul 2>&1";
+    $cmd7z = "\"$sevenZip\" a -mx9 \"$temp7z\" $filesToArchive -xr!tests -xr!*.bak -xr!*.phpt -xr!*.pdb >nul 2>&1";
     shell_exec($cmd7z);
 
     if (file_exists($temp7z)) {
         $sfxConfig = $scratch . DIRECTORY_SEPARATOR . 'sfx_config.txt';
-        file_put_contents($sfxConfig, ";!@Install@!UTF-8!\r\nTitle=\"PCB Barcode Print Setup\"\r\nBeginPrompt=\"Instal PCB Barcode Print di komputer ini?\"\r\nExtractTitle=\"Mengekstrak PCB Barcode Print...\"\r\nExtractPathText=\"Pilih folder lokasi instalasi:\"\r\nExtractPathWidth=\"280\"\r\nGUIFlags=\"32\"\r\n;!@InstallEnd@!\r\n");
+        $sfxContent = ";!@Install@!UTF-8!\r\n" .
+                      "Title=\"PCB Barcode Print v2.4 Setup\"\r\n" .
+                      "BeginPrompt=\"Instal PCB Barcode Print v2.4 (Studio Edition) di komputer ini?\"\r\n" .
+                      "ExtractTitle=\"Mengekstrak PCB Barcode Print v2.4...\"\r\n" .
+                      "ExtractPathText=\"Pilih folder lokasi instalasi:\"\r\n" .
+                      "ExtractPathWidth=\"280\"\r\n" .
+                      "GUIFlags=\"32\"\r\n" .
+                      ";!@InstallEnd@!\r\n";
+        file_put_contents($sfxConfig, $sfxContent);
 
         $sfxExe = $dist . DIRECTORY_SEPARATOR . 'Setup_PCBBarcodePrint_UltraCompact.exe';
         copy($sfxModule, $sfxExe);
@@ -160,6 +235,6 @@ if (file_exists($sevenZip) && file_exists($sfxModule)) {
 echo "=========================================================\n";
 echo "PAKET INSTALASI BERHASIL DIBUAT DI FOLDER 'dist/':\n";
 foreach (glob($dist . '/*') as $f) {
-    printf(" * %-42s : %6.2f MB\n", basename($f), filesize($f) / (1024 * 1024));
+    printf(" * %-44s : %6.2f MB\n", basename($f), filesize($f) / (1024 * 1024));
 }
 echo "=========================================================\n";

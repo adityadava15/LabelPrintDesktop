@@ -1,8 +1,8 @@
 <?php
 /**
  * API Printers - Mengambil daftar printer dari Windows Settings (Printers & Scanners)
- * Mendeteksi status Ready / Offline dan printer default Windows.
- * Mengatur printer default Windows & browser profile secara instan.
+ * Mendeteksi status Ready / Offline, menyimpan Default Printer KHUSUS aplikasi ini
+ * tanpa mengubah pengaturan Default Printer Windows pengguna.
  */
 header('Content-Type: application/json; charset=utf-8');
 
@@ -13,50 +13,140 @@ error_reporting(E_ALL & ~E_WARNING & ~E_NOTICE & ~E_DEPRECATED);
 $action = isset($_REQUEST['action']) ? trim($_REQUEST['action']) : 'list';
 
 /**
- * Sinkronisasi printer terpilih ke preferensi profil Chromium (Edge / Chrome)
+ * Lokasi file konfigurasi default printer khusus software ini
  */
-function syncProfilePreferences($printerName) {
-    $prefFile = __DIR__ . '/data/profile/Default/Preferences';
-    if (!file_exists($prefFile)) return false;
-    
-    $raw = @file_get_contents($prefFile);
-    if (!$raw) return false;
-    
-    $data = @json_decode($raw, true);
-    if (!is_array($data)) return false;
-    
-    if (!isset($data['printing'])) {
-        $data['printing'] = [];
+function getPrinterConfigFile() {
+    $dataDir = __DIR__ . DIRECTORY_SEPARATOR . 'data';
+    if (!is_dir($dataDir)) {
+        @mkdir($dataDir, 0777, true);
     }
-    if (!isset($data['printing']['print_preview_sticky_settings'])) {
-        $data['printing']['print_preview_sticky_settings'] = [];
-    }
-    
-    $appState = [];
-    if (!empty($data['printing']['print_preview_sticky_settings']['appState'])) {
-        $appState = @json_decode($data['printing']['print_preview_sticky_settings']['appState'], true) ?: [];
-    }
-    
-    $appState['version'] = 2;
-    $appState['recentDestinations'] = [
-        [
-            'id' => $printerName,
-            'origin' => 'local',
-            'displayName' => $printerName,
-            'printerStatus' => 'printerStatusReady',
-            'extensionId' => '',
-            'extensionName' => ''
-        ]
+    return $dataDir . DIRECTORY_SEPARATOR . 'printer_config.json';
+}
+
+function loadPrinterConfig() {
+    $defaults = [
+        'app_default_printer' => '',
+        'updated_at' => '',
+        'pending_restore_windows_printer' => '',
+        'pending_restore_time' => 0
     ];
-    
-    $data['printing']['print_preview_sticky_settings']['appState'] = json_encode($appState, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-    
-    @file_put_contents($prefFile, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+    $file = getPrinterConfigFile();
+    if (file_exists($file)) {
+        $raw = @file_get_contents($file);
+        if ($raw) {
+            $decoded = @json_decode($raw, true);
+            if (is_array($decoded)) {
+                return array_merge($defaults, $decoded);
+            }
+        }
+    }
+    return $defaults;
+}
+
+function savePrinterConfig(array $config) {
+    $file = getPrinterConfigFile();
+    $current = loadPrinterConfig();
+    $merged = array_merge($current, $config);
+    return (bool) @file_put_contents($file, json_encode($merged, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+}
+
+/**
+ * Membaca Default Printer Windows saat ini dari Registry (cepat ~15ms)
+ */
+function getCurrentWindowsDefaultPrinter() {
+    $out = @shell_exec('reg query "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows" /v Device 2>nul');
+    if ($out && preg_match('/\bDevice\s+REG_SZ\s+([^\r\n]+)/i', $out, $m)) {
+        $parts = explode(',', trim($m[1]));
+        return trim($parts[0]);
+    }
+    return '';
+}
+
+/**
+ * Mengatur spooler default printer Windows sementara (hanya saat proses silent print berlangsung)
+ */
+function setWindowsSpoolerDefaultPrinter($printerName) {
+    $printerName = trim((string)$printerName);
+    if ($printerName === '') return false;
+    $safeArg = str_replace('"', '\"', $printerName);
+    @exec('rundll32.exe printui.dll,PrintUIEntry /y /n "' . $safeArg . '"');
     return true;
 }
 
 /**
- * Pastikan browser policy selalu mengarahkan silent print ke default printer Windows
+ * Mengembalikan Default Printer Windows ke pengaturan asli pengguna setelah silent print selesai
+ */
+function restorePendingWindowsDefaultPrinter($force = false) {
+    $cfg = loadPrinterConfig();
+    $pending = trim((string)($cfg['pending_restore_windows_printer'] ?? ''));
+    if ($pending === '') {
+        return false;
+    }
+    $elapsed = time() - (int)($cfg['pending_restore_time'] ?? 0);
+    if ($force || $elapsed >= 10) {
+        setWindowsSpoolerDefaultPrinter($pending);
+        savePrinterConfig([
+            'pending_restore_windows_printer' => '',
+            'pending_restore_time' => 0
+        ]);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Sinkronisasi printer terpilih ke preferensi profil Chromium (Edge & Chrome)
+ */
+function syncProfilePreferences($printerName) {
+    $prefFiles = [
+        __DIR__ . '/data/profile/Default/Preferences',
+        __DIR__ . '/data/profile_chrome/Default/Preferences'
+    ];
+    $updated = false;
+
+    foreach ($prefFiles as $prefFile) {
+        if (!file_exists($prefFile)) continue;
+
+        $raw = @file_get_contents($prefFile);
+        if (!$raw) continue;
+
+        $data = @json_decode($raw, true);
+        if (!is_array($data)) continue;
+
+        if (!isset($data['printing'])) {
+            $data['printing'] = [];
+        }
+        if (!isset($data['printing']['print_preview_sticky_settings'])) {
+            $data['printing']['print_preview_sticky_settings'] = [];
+        }
+
+        $appState = [];
+        if (!empty($data['printing']['print_preview_sticky_settings']['appState'])) {
+            $appState = @json_decode($data['printing']['print_preview_sticky_settings']['appState'], true) ?: [];
+        }
+
+        $appState['version'] = 2;
+        $appState['recentDestinations'] = [
+            [
+                'id' => $printerName,
+                'origin' => 'local',
+                'displayName' => $printerName,
+                'printerStatus' => 'printerStatusReady',
+                'extensionId' => '',
+                'extensionName' => ''
+            ]
+        ];
+
+        $data['printing']['print_preview_sticky_settings']['appState'] = json_encode($appState, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        @file_put_contents($prefFile, json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+        $updated = true;
+    }
+    return $updated;
+}
+
+/**
+ * Pastikan browser policy mengizinkan silent kiosk print
  */
 function enforceBrowserPrintPolicies() {
     @exec('reg add "HKCU\Software\Policies\Microsoft\Edge" /v PrintPreviewUseSystemDefaultPrinter /t REG_DWORD /d 1 /f');
@@ -64,38 +154,174 @@ function enforceBrowserPrintPolicies() {
     @exec('reg add "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Windows" /v LegacyDefaultPrinterMode /t REG_DWORD /d 1 /f');
 }
 
-if ($action === 'set_default') {
+// 1. Set as Default KHUSUS untuk software ini (TIDAK mengubah default printer Windows)
+if ($action === 'set_app_default' || $action === 'set_default') {
     $printerName = isset($_REQUEST['name']) ? trim($_REQUEST['name']) : '';
     if (empty($printerName)) {
         echo json_encode(['success' => false, 'error' => 'Nama printer tidak boleh kosong']);
         exit;
     }
 
-    // 1. Set Windows default printer secara instan dengan rundll32 printui.dll (~50ms)
-    $safeArg = str_replace('"', '\"', $printerName);
-    @exec('rundll32.exe printui.dll,PrintUIEntry /y /n "' . $safeArg . '"');
+    // Pastikan jika ada override sementara sebelumnya, kembalikan dulu ke default Windows asli
+    restorePendingWindowsDefaultPrinter(true);
 
-    // 2. Set Windows default printer via COM WScript.Network sebagai backup
-    $safePsName = str_replace(["'", "\\"], ["''", "\\\\"], $printerName);
-    $psCmd = 'powershell -NoProfile -ExecutionPolicy Bypass -Command "$ProgressPreference = \'SilentlyContinue\'; try { (New-Object -ComObject WScript.Network).SetDefaultPrinter(\'' . $safePsName . '\') } catch {}"';
-    @exec($psCmd);
+    // Simpan sebagai default printer khusus software ini
+    savePrinterConfig([
+        'app_default_printer' => $printerName,
+        'updated_at' => date('Y-m-d H:i:s')
+    ]);
 
-    // 3. Pastikan Edge / Chrome selalu mengarahkan print ke system default printer
-    enforceBrowserPrintPolicies();
-
-    // 4. Update file Preferences profil browser jika ada
+    // Update file Preferences profil lokal aplikasi jika ada
     syncProfilePreferences($printerName);
 
     echo json_encode([
         'success' => true,
         'selected' => $printerName,
-        'message' => "Printer default berhasil diubah ke: $printerName"
-    ]);
+        'app_default_printer' => $printerName,
+        'windows_default_printer' => getCurrentWindowsDefaultPrinter(),
+        'message' => "Printer \"$printerName\" berhasil disimpan sebagai Default khusus software ini (tanpa mengubah default printer Windows)."
+    ], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
-// Action: 'list' (Default)
-enforceBrowserPrintPolicies();
+// 2. Prepare Print: Arahkan spooler sementara sesaat sebelum silent print, lalu simpan default Windows asli untuk di-restore
+if ($action === 'prepare_print') {
+    $printerName = isset($_REQUEST['name']) ? trim($_REQUEST['name']) : '';
+    if (empty($printerName)) {
+        echo json_encode(['success' => false, 'error' => 'Nama printer tidak boleh kosong']);
+        exit;
+    }
+
+    $cfg = loadPrinterConfig();
+    $currentWinDef = getCurrentWindowsDefaultPrinter();
+
+    // Simpan default printer Windows asli jika belum ada pending restore dan berbeda dari printer tujuan cetak
+    if (empty($cfg['pending_restore_windows_printer'])) {
+        if ($currentWinDef !== '' && strcasecmp($currentWinDef, $printerName) !== 0) {
+            savePrinterConfig([
+                'pending_restore_windows_printer' => $currentWinDef,
+                'pending_restore_time' => time()
+            ]);
+        }
+    }
+
+    if ($currentWinDef === '' || strcasecmp($currentWinDef, $printerName) !== 0) {
+        setWindowsSpoolerDefaultPrinter($printerName);
+    }
+
+    enforceBrowserPrintPolicies();
+    syncProfilePreferences($printerName);
+
+    $updatedCfg = loadPrinterConfig();
+    echo json_encode([
+        'success' => true,
+        'selected' => $printerName,
+        'preserved_windows_default' => $updatedCfg['pending_restore_windows_printer'] ?: $currentWinDef
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// 3. Restore Windows Default Printer segera setelah job cetak terkirim ke spooler
+if ($action === 'restore_windows_default') {
+    $restored = restorePendingWindowsDefaultPrinter(true);
+    echo json_encode([
+        'success' => true,
+        'restored' => $restored,
+        'windows_default_printer' => getCurrentWindowsDefaultPrinter()
+    ], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+// 4. Direct Print: Kirim perintah cetak langsung ke printer Windows via DirectPrint.exe tanpa membuka popup print browser
+if ($action === 'direct_print') {
+    $printerName = isset($_REQUEST['printer']) ? trim($_REQUEST['printer']) : '';
+    $htmlContent = isset($_REQUEST['html']) ? (string)$_REQUEST['html'] : '';
+    $dryRun = !empty($_REQUEST['dry_run']);
+
+    if ($printerName === '') {
+        $cfg = loadPrinterConfig();
+        $printerName = trim((string)($cfg['app_default_printer'] ?? ''));
+        if ($printerName === '') {
+            $printerName = getCurrentWindowsDefaultPrinter();
+        }
+    }
+
+    if ($printerName === '') {
+        echo json_encode(['success' => false, 'error' => 'Nama printer tujuan belum dipilih.']);
+        exit;
+    }
+
+    if (trim($htmlContent) === '') {
+        echo json_encode(['success' => false, 'error' => 'Konten dokumen cetak kosong.']);
+        exit;
+    }
+
+    $directPrintExe = __DIR__ . DIRECTORY_SEPARATOR . 'DirectPrint.exe';
+    $directPrintCs = __DIR__ . DIRECTORY_SEPARATOR . 'DirectPrint.cs';
+    $cscPath = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe';
+
+    if (!file_exists($directPrintExe) && file_exists($directPrintCs) && file_exists($cscPath)) {
+        $compileCmd = '"' . $cscPath . '" /nologo /target:exe /out:"' . $directPrintExe . '" ' .
+            '/r:System.dll /r:System.Drawing.dll ' .
+            '/r:"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Runtime.dll" ' .
+            '/r:"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Runtime.WindowsRuntime.dll" ' .
+            '/r:"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\System.Runtime.InteropServices.WindowsRuntime.dll" ' .
+            '/r:"C:\Windows\System32\WinMetadata\Windows.Data.winmd" ' .
+            '/r:"C:\Windows\System32\WinMetadata\Windows.Foundation.winmd" ' .
+            '/r:"C:\Windows\System32\WinMetadata\Windows.Storage.winmd" ' .
+            '/optimize+ "' . $directPrintCs . '"';
+        @shell_exec($compileCmd);
+    }
+
+    if (!file_exists($directPrintExe)) {
+        echo json_encode(['success' => false, 'error' => 'Modul DirectPrint.exe tidak ditemukan.']);
+        exit;
+    }
+
+    $dataDir = __DIR__ . DIRECTORY_SEPARATOR . 'data';
+    if (!is_dir($dataDir)) {
+        @mkdir($dataDir, 0777, true);
+    }
+
+    // Sisipkan <base href> agar path relatif gambar/aset tetap terbaca dari root aplikasi
+    $baseHref = 'file:///' . str_replace('\\', '/', realpath(__DIR__)) . '/';
+    if (stripos($htmlContent, '<base ') === false) {
+        if (stripos($htmlContent, '<head>') !== false) {
+            $htmlContent = preg_replace('/<head>/i', '<head><base href="' . htmlspecialchars($baseHref, ENT_QUOTES) . '">', $htmlContent, 1);
+        } else {
+            $htmlContent = '<base href="' . htmlspecialchars($baseHref, ENT_QUOTES) . '">' . $htmlContent;
+        }
+    }
+
+    $jobId = uniqid('printjob_', true);
+    $tempHtmlFile = $dataDir . DIRECTORY_SEPARATOR . $jobId . '.html';
+    @file_put_contents($tempHtmlFile, $htmlContent);
+
+    $safeExe = '"' . $directPrintExe . '"';
+    $safeHtml = '"' . $tempHtmlFile . '"';
+    $safePrinter = '"' . str_replace('"', '\"', $printerName) . '"';
+    $extraFlag = $dryRun ? ' --dry-run' : '';
+
+    $cmdOutput = @shell_exec("$safeExe $safeHtml $safePrinter 600$extraFlag 2>&1");
+    @unlink($tempHtmlFile);
+
+    $parsed = @json_decode(trim((string)$cmdOutput), true);
+    if (is_array($parsed) && isset($parsed['success'])) {
+        echo json_encode($parsed, JSON_UNESCAPED_UNICODE);
+    } else {
+        echo json_encode([
+            'success' => false,
+            'error' => 'Gagal mengirim perintah cetak: ' . trim((string)$cmdOutput)
+        ], JSON_UNESCAPED_UNICODE);
+    }
+    exit;
+}
+
+// 4. Action: 'list' (Default)
+restorePendingWindowsDefaultPrinter(false);
+
+$printerCfg = loadPrinterConfig();
+$savedAppDefault = trim((string)($printerCfg['app_default_printer'] ?? ''));
 
 $psScript = <<<'POWERSHELL'
 $ProgressPreference = 'SilentlyContinue';
@@ -165,29 +391,49 @@ if (is_array($decoded)) {
     }
 }
 
-// Urutkan: Default pertama, lalu Ready, lalu Offline
+$windowsDefaultPrinter = '';
+$matchedAppDefault = '';
+
+foreach ($printerList as &$p) {
+    $isWinDef = !empty($p['is_default']);
+    if ($isWinDef && $windowsDefaultPrinter === '') {
+        $windowsDefaultPrinter = $p['name'];
+    }
+    $isAppDef = ($savedAppDefault !== '' && strcasecmp($p['name'], $savedAppDefault) === 0);
+    if ($isAppDef) {
+        $matchedAppDefault = $p['name'];
+    }
+    $p['is_windows_default'] = $isWinDef;
+    $p['is_app_default'] = $isAppDef;
+    $p['is_default'] = ($savedAppDefault !== '') ? $isAppDef : $isWinDef;
+}
+unset($p);
+
+// Jika printer default software disimpan tapi sedang tidak terdeteksi di list, tetap laporkan namanya
+$reportedAppDefault = $matchedAppDefault !== '' ? $matchedAppDefault : $savedAppDefault;
+
+// Urutkan: Default Software pertama, lalu Ready, lalu Default Windows, lalu abjad
 usort($printerList, function ($a, $b) {
-    if (!empty($a['is_default']) && empty($b['is_default'])) return -1;
-    if (empty($a['is_default']) && !empty($b['is_default'])) return 1;
+    if (!empty($a['is_app_default']) && empty($b['is_app_default'])) return -1;
+    if (empty($a['is_app_default']) && !empty($b['is_app_default'])) return 1;
     if (!empty($a['is_ready']) && empty($b['is_ready'])) return -1;
     if (empty($a['is_ready']) && !empty($b['is_ready'])) return 1;
+    if (!empty($a['is_windows_default']) && empty($b['is_windows_default'])) return -1;
+    if (empty($a['is_windows_default']) && !empty($b['is_windows_default'])) return 1;
     return strcasecmp($a['name'], $b['name']);
 });
 
-$defaultPrinter = '';
-foreach ($printerList as $p) {
-    if (!empty($p['is_default'])) {
-        $defaultPrinter = $p['name'];
-        break;
-    }
-}
-if (empty($defaultPrinter) && !empty($printerList)) {
-    $defaultPrinter = $printerList[0]['name'];
+$effectiveDefaultPrinter = $matchedAppDefault !== '' ? $matchedAppDefault : $windowsDefaultPrinter;
+if (empty($effectiveDefaultPrinter) && !empty($printerList)) {
+    $effectiveDefaultPrinter = $printerList[0]['name'];
 }
 
 echo json_encode([
     'success' => true,
-    'default_printer' => $defaultPrinter,
+    'app_default_printer' => $reportedAppDefault,
+    'windows_default_printer' => $windowsDefaultPrinter,
+    'default_printer' => $effectiveDefaultPrinter,
     'total' => count($printerList),
     'printers' => $printerList
 ], JSON_UNESCAPED_UNICODE | JSON_PRETTY_PRINT);
+

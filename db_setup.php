@@ -1,93 +1,140 @@
 <?php
+define('SKIP_AUTO_DB_CONNECT', true);
 require_once __DIR__ . '/db_config.php';
 
 $message = '';
 $messageType = '';
 $tested = false;
 $connected = false;
+$connectedHost = '';
+$connectedViaFallback = false;
 
 $config = getDbConfig();
 
 if (isset($_GET['error']) && !empty($_GET['error'])) {
-    $message = htmlspecialchars($_GET['error']);
+    $message = htmlspecialchars($_GET['error'], ENT_QUOTES, 'UTF-8');
     $messageType = 'danger';
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
-    
+
     $host = trim($_POST['host'] ?? '127.0.0.1');
-    $port = (int)($_POST['port'] ?? 3306);
+    $fallbackHost = trim($_POST['fallback_host'] ?? '');
+    $port = (int)($_POST['port'] ?? 3307);
+    if ($port <= 0 || $port > 65535) {
+        $port = 3307;
+    }
     $user = trim($_POST['username'] ?? 'root');
     $pass = $_POST['password'] ?? '';
     $db   = trim($_POST['database'] ?? 'test');
-    
+    $timeout = !empty($config['timeout']) ? (int)$config['timeout'] : 3;
+
     $newConfig = [
         'host' => $host,
+        'fallback_host' => $fallbackHost,
         'port' => $port,
         'username' => $user,
         'password' => $pass,
         'database' => $db,
-        'timeout' => 3
+        'timeout' => $timeout
     ];
 
     if ($action === 'test' || $action === 'save') {
-        $testConn = mysqli_init();
-        $testConn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
-        $ok = @$testConn->real_connect($host, $user, $pass, $db, $port);
-        
+        $activeHost = null;
+        $errMsg = '';
+        $usedFallback = false;
+        $testConn = connectDbWithConfig($newConfig, false, 3, $activeHost, $errMsg, $usedFallback);
+
         $tested = true;
-        if ($ok && !$testConn->connect_errno) {
+        $config = $newConfig;
+        if ($testConn !== false) {
+            $testConn->close();
             $connected = true;
+            $connectedHost = (string)$activeHost;
+            $connectedViaFallback = $usedFallback;
+
             if ($action === 'save') {
                 saveDbConfig($newConfig);
-                $config = $newConfig;
-                $message = "Konfigurasi database berhasil disimpan dan terhubung!";
+                cacheResolvedDbHost($newConfig, $activeHost);
+                if ($usedFallback) {
+                    $message = "Konfigurasi disimpan! Server utama (" . htmlspecialchars($host, ENT_QUOTES, 'UTF-8') . ":{$port}) belum merespons, saat ini terhubung melalui IP cadangan (" . htmlspecialchars($connectedHost, ENT_QUOTES, 'UTF-8') . ":{$port}).";
+                } else {
+                    $message = "Konfigurasi database berhasil disimpan dan terhubung ke " . htmlspecialchars($connectedHost, ENT_QUOTES, 'UTF-8') . ":{$port}!";
+                }
                 $messageType = 'success';
             } else {
-                $message = "Koneksi berhasil! Database ditemukan.";
+                if ($usedFallback) {
+                    $message = "Server utama (" . htmlspecialchars($host, ENT_QUOTES, 'UTF-8') . ":{$port}) tidak merespons, namun berhasil terhubung ke IP cadangan (" . htmlspecialchars($connectedHost, ENT_QUOTES, 'UTF-8') . ":{$port})!";
+                } else {
+                    $message = "Koneksi berhasil ke " . htmlspecialchars($connectedHost, ENT_QUOTES, 'UTF-8') . ":{$port}! Database '" . htmlspecialchars($db, ENT_QUOTES, 'UTF-8') . "' ditemukan.";
+                }
                 $messageType = 'success';
             }
         } else {
-            $err = $testConn->connect_error ?: "Koneksi gagal atau database '$db' belum ada.";
-            $message = "Gagal terhubung: " . $err;
+            $err = $errMsg ?: "Koneksi gagal atau database '$db' belum ada.";
+            $message = "Gagal terhubung: " . htmlspecialchars($err, ENT_QUOTES, 'UTF-8');
             $messageType = 'danger';
         }
     } elseif ($action === 'import') {
-        $testConn = mysqli_init();
-        $testConn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 3);
-        $ok = @$testConn->real_connect($host, $user, $pass, $db, $port);
-        
-        if ($ok && !$testConn->connect_errno) {
+        $activeHost = null;
+        $errMsg = '';
+        $usedFallback = false;
+        $testConn = connectDbWithConfig($newConfig, false, 3, $activeHost, $errMsg, $usedFallback);
+        $config = $newConfig;
+
+        if ($testConn !== false) {
             $sqlFile = __DIR__ . '/test.sql';
             if (file_exists($sqlFile)) {
                 $sqlContent = file_get_contents($sqlFile);
-                $testConn->multi_query($sqlContent);
-                do {
-                    if ($res = $testConn->store_result()) {
-                        $res->free();
-                    }
-                } while ($testConn->more_results() && $testConn->next_result());
-                
-                $message = "Database berhasil diimport dari test.sql!";
-                $messageType = 'success';
+                $importOk = $testConn->multi_query($sqlContent);
+                $importErr = $importOk ? '' : $testConn->error;
+                if ($importOk) {
+                    do {
+                        if ($res = $testConn->store_result()) {
+                            $res->free();
+                        }
+                        if ($testConn->errno) {
+                            $importOk = false;
+                            $importErr = $testConn->error;
+                            break;
+                        }
+                    } while ($testConn->more_results() && $testConn->next_result());
+                }
+                $testConn->close();
+
                 $connected = true;
+                $connectedHost = (string)$activeHost;
+                $connectedViaFallback = $usedFallback;
+
+                if ($importOk) {
+                    $message = "Database berhasil diimport dari test.sql ke " . htmlspecialchars($connectedHost, ENT_QUOTES, 'UTF-8') . ":{$port}!";
+                    $messageType = 'success';
+                } else {
+                    $message = "Import test.sql selesai dengan error: " . htmlspecialchars($importErr, ENT_QUOTES, 'UTF-8');
+                    $messageType = 'danger';
+                }
             } else {
+                $testConn->close();
                 $message = "File test.sql tidak ditemukan.";
                 $messageType = 'danger';
             }
         } else {
-            $message = "Gagal terhubung sebelum import.";
+            $message = "Gagal terhubung sebelum import: " . htmlspecialchars($errMsg, ENT_QUOTES, 'UTF-8');
             $messageType = 'danger';
         }
     }
 } else {
     // Check initial connection silently
-    $initConn = mysqli_init();
-    $initConn->options(MYSQLI_OPT_CONNECT_TIMEOUT, 2);
-    $ok = @$initConn->real_connect($config['host'], $config['username'], $config['password'], $config['database'], (int)$config['port']);
-    if ($ok && !$initConn->connect_errno) {
+    $activeHost = null;
+    $errMsg = '';
+    $usedFallback = false;
+    $initConn = connectDbWithConfig($config, true, 2, $activeHost, $errMsg, $usedFallback);
+    if ($initConn !== false) {
+        $initConn->close();
         $connected = true;
+        $connectedHost = (string)$activeHost;
+        $connectedViaFallback = $usedFallback;
     }
 }
 ?>
@@ -127,7 +174,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     .container {
       background: var(--card);
       width: 100%;
-      max-width: 580px;
+      max-width: 620px;
       border-radius: 14px;
       padding: 30px;
       box-shadow: 0 10px 30px rgba(0,0,0,0.3);
@@ -172,25 +219,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       border: 1px solid #c3e6cb;
     }
     .presets {
-      display: flex;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
       gap: 8px;
       margin-bottom: 20px;
-      flex-wrap: wrap;
+    }
+    @media (max-width: 520px) {
+      .presets {
+        grid-template-columns: 1fr;
+      }
     }
     .preset-btn {
       background: #eef3f9;
       border: 1px solid #d0dbe9;
       color: #1a4b84;
-      padding: 7px 12px;
+      padding: 8px 12px;
       border-radius: 6px;
       font-size: 12px;
       cursor: pointer;
       font-weight: 500;
+      text-align: left;
       transition: all 0.2s;
     }
     .preset-btn:hover {
       background: #e0eaf5;
       border-color: #1a4b84;
+    }
+    .preset-btn.active {
+      background: #dbe8f8;
+      border-color: #123968;
+      color: #0b2547;
+      font-weight: 600;
     }
     .form-group {
       margin-bottom: 15px;
@@ -221,6 +280,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     input:focus {
       border-color: var(--accent-hover);
       box-shadow: 0 0 0 3px rgba(26, 75, 132, 0.15);
+    }
+    .field-hint {
+      margin-top: 5px;
+      font-size: 11.5px;
+      color: var(--muted);
     }
     .actions {
       display: flex;
@@ -274,6 +338,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
       display: flex;
       justify-content: space-between;
       align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
     }
     .footer-note a {
       color: var(--accent-hover);
@@ -304,38 +370,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div>
       <div style="font-size: 12px; font-weight: 600; margin-bottom: 8px; color: var(--muted);">PRESET CEPAT:</div>
       <div class="presets">
-        <button type="button" class="preset-btn" onclick="applyPreset('192.168.88.254', 3307, 'root', '', 'test')">🏢 Server Kantor (192.168.88.254:3307)</button>
-        <button type="button" class="preset-btn" onclick="applyPreset('127.0.0.1', 3306, 'root', '', 'test')">💻 Localhost (127.0.0.1:3306)</button>
-        <button type="button" class="preset-btn" onclick="applyPreset('127.0.0.1', 3307, 'root', '', 'test')">⚡ Localhost Port 3307</button>
+        <button type="button" class="preset-btn" data-host="192.168.88.254" data-port="3307" onclick="applyPreset('192.168.88.254', '192.168.2.254', 3307, 'root', '', 'test')">🏢 Server Kantor (192.168.88.254:3307)</button>
+        <button type="button" class="preset-btn" data-host="192.168.2.254" data-port="3307" onclick="applyPreset('192.168.2.254', '192.168.88.254', 3307, 'root', '', 'test')">🏠 Server Kantor Lokal (192.168.2.254:3307)</button>
+        <button type="button" class="preset-btn" data-host="127.0.0.1" data-port="3306" onclick="applyPreset('127.0.0.1', '', 3306, 'root', '', 'test')">💻 Localhost (127.0.0.1:3306)</button>
+        <button type="button" class="preset-btn" data-host="127.0.0.1" data-port="3307" onclick="applyPreset('127.0.0.1', '', 3307, 'root', '', 'test')">⚡ Localhost Port 3307</button>
       </div>
     </div>
 
     <form method="POST" id="dbForm">
       <div class="form-row">
         <div class="form-group" style="flex: 2;">
-          <label for="host">Host / IP Server</label>
-          <input type="text" id="host" name="host" value="<?= htmlspecialchars($config['host']) ?>" required>
+          <label for="host">Host / IP Server Utama</label>
+          <input type="text" id="host" name="host" value="<?= htmlspecialchars($config['host'], ENT_QUOTES, 'UTF-8') ?>" required>
         </div>
         <div class="form-group" style="flex: 1;">
           <label for="port">Port</label>
-          <input type="number" id="port" name="port" value="<?= (int)$config['port'] ?>" required>
+          <input type="number" id="port" name="port" min="1" max="65535" value="<?= (int)$config['port'] ?>" required>
         </div>
+      </div>
+
+      <div class="form-group">
+        <label for="fallback_host">IP Server Cadangan / Fallback <span style="font-weight:400; color:var(--muted);">(Opsional)</span></label>
+        <input type="text" id="fallback_host" name="fallback_host" value="<?= htmlspecialchars($config['fallback_host'] ?? '', ENT_QUOTES, 'UTF-8') ?>" placeholder="Contoh: 192.168.2.254 (kosongkan jika tidak perlu)">
+        <div class="field-hint">Otomatis digunakan jika IP Server Utama tidak dapat dijangkau (port sama).</div>
       </div>
 
       <div class="form-row">
         <div class="form-group">
           <label for="username">Username MySQL</label>
-          <input type="text" id="username" name="username" value="<?= htmlspecialchars($config['username']) ?>" required>
+          <input type="text" id="username" name="username" value="<?= htmlspecialchars($config['username'], ENT_QUOTES, 'UTF-8') ?>" required>
         </div>
         <div class="form-group">
           <label for="password">Password</label>
-          <input type="password" id="password" name="password" value="<?= htmlspecialchars($config['password']) ?>" placeholder="(Kosong jika tanpa password)">
+          <input type="password" id="password" name="password" value="<?= htmlspecialchars($config['password'], ENT_QUOTES, 'UTF-8') ?>" placeholder="(Kosong jika tanpa password)">
         </div>
       </div>
 
       <div class="form-group">
         <label for="database">Nama Database</label>
-        <input type="text" id="database" name="database" value="<?= htmlspecialchars($config['database']) ?>" required>
+        <input type="text" id="database" name="database" value="<?= htmlspecialchars($config['database'], ENT_QUOTES, 'UTF-8') ?>" required>
       </div>
 
       <div class="actions">
@@ -349,19 +422,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     </form>
 
     <div class="footer-note">
-      <span>Status: <?= $connected ? '<b style="color:var(--success)">● Terhubung</b>' : '<b style="color:var(--danger)">● Belum Terhubung</b>' ?></span>
+      <span>
+        Status:
+        <?php if ($connected): ?>
+          <b style="color:var(--success)">
+            ● Terhubung
+            <?php if ($connectedHost !== ''): ?>
+              (<?= $connectedViaFallback ? 'Cadangan: ' : '' ?><?= htmlspecialchars($connectedHost, ENT_QUOTES, 'UTF-8') ?>:<?= (int)$config['port'] ?>)
+            <?php endif; ?>
+          </b>
+        <?php else: ?>
+          <b style="color:var(--danger)">● Belum Terhubung</b>
+        <?php endif; ?>
+      </span>
       <a href="Login1.php">Kembali ke Halaman Login</a>
     </div>
   </div>
 
   <script>
-    function applyPreset(host, port, user, pass, db) {
+    function updateActivePreset() {
+      var host = document.getElementById('host').value.trim();
+      var port = document.getElementById('port').value.trim();
+      var buttons = document.querySelectorAll('.preset-btn');
+      buttons.forEach(function (btn) {
+        var match = btn.getAttribute('data-host') === host && btn.getAttribute('data-port') === port;
+        btn.classList.toggle('active', match);
+      });
+    }
+
+    function applyPreset(host, fallbackHost, port, user, pass, db) {
       document.getElementById('host').value = host;
+      document.getElementById('fallback_host').value = fallbackHost;
       document.getElementById('port').value = port;
       document.getElementById('username').value = user;
       document.getElementById('password').value = pass;
       document.getElementById('database').value = db;
+      updateActivePreset();
     }
+
+    document.getElementById('host').addEventListener('input', updateActivePreset);
+    document.getElementById('port').addEventListener('input', updateActivePreset);
+    updateActivePreset();
   </script>
 </body>
 </html>

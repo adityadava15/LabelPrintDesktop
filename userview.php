@@ -1,4 +1,6 @@
 <?php
+header("Cache-Control: no-store, no-cache, must-revalidate, max-age=0");
+header("Pragma: no-cache");
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
@@ -497,9 +499,14 @@ w.document.write(`
   .page {
     width: 79.95mm;
     height: 34.03mm;
-    margin-top: -10px;
+    margin-top: 0;
     page-break-after: always;
+    break-after: page;
     position: relative;
+  }
+  .page:last-child {
+    page-break-after: auto;
+    break-after: auto;
   }
   .page table {
     width: 100%;
@@ -508,6 +515,8 @@ w.document.write(`
     border-collapse: separate;
     border-spacing: 0 0.5mm;
     margin-top: 0;
+    position: relative;
+    top: -2.35mm;
   }
   .label {
     text-align: center;
@@ -518,7 +527,7 @@ w.document.write(`
     transform: translateY(1.2mm);
   }
   .page table tr:first-child .label {
-    transform: translateY(2.1mm);
+    transform: translateY(1.9mm);
   }
   .label svg {
     width: 23.27mm;
@@ -4229,9 +4238,14 @@ if ($menu === 'record') {
           .page {
             width: 79.95mm;
             height: 34.03mm;
-            margin-top: -10px;
+            margin-top: 0;
             page-break-after: always;
+            break-after: page;
             position: relative;
+          }
+          .page:last-child {
+            page-break-after: auto;
+            break-after: auto;
           }
           .page table {
             width: 100%;
@@ -4240,6 +4254,8 @@ if ($menu === 'record') {
             border-collapse: separate;
             border-spacing: 0 0.5mm;
             margin-top: 0;
+            position: relative;
+            top: -2.35mm;
           }
           .label {
             text-align: center;
@@ -4250,7 +4266,7 @@ if ($menu === 'record') {
             transform: translateY(1.2mm);
           }
           .page table tr:first-child .label {
-            transform: translateY(2.1mm);
+            transform: translateY(1.9mm);
           }
           .label svg {
             width: 23.27mm;

@@ -143,6 +143,83 @@
   color: #f87171;
 }
 
+/* Printer Label Row & Default Software Badge */
+.app-print-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  gap: 8px;
+}
+
+.app-print-default-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.14);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+}
+
+/* Set as Default (App-Only) Button & Info Note */
+.app-print-default-actions {
+  margin-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.app-print-btn-setdefault {
+  width: 100%;
+  background: rgba(59, 130, 246, 0.14);
+  border: 1px solid rgba(59, 130, 246, 0.42);
+  color: #93c5fd;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  text-align: center;
+}
+
+.app-print-btn-setdefault:hover {
+  background: rgba(59, 130, 246, 0.25);
+  border-color: #60a5fa;
+  color: #ffffff;
+}
+
+.app-print-btn-setdefault.is-default-active {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: rgba(16, 185, 129, 0.4);
+  color: #6ee7b7;
+  cursor: default;
+}
+
+.app-print-setdefault-icon {
+  font-size: 13.5px;
+  line-height: 1;
+}
+
+.app-print-default-note {
+  font-size: 10.8px;
+  color: #94a3b8;
+  line-height: 1.38;
+}
+
+.app-print-default-note.is-saved {
+  color: #34d399;
+}
+
 /* Copies Input */
 .app-print-input-number {
   max-width: 120px;
@@ -170,6 +247,24 @@
   accent-color: #2563eb;
   cursor: pointer;
   margin: 0;
+}
+
+.app-print-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: #e2e8f0;
+  cursor: pointer;
+}
+
+.app-print-checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+  cursor: pointer;
+  margin: 0;
+  flex-shrink: 0;
 }
 
 /* Page Range Input */
@@ -408,4 +503,74 @@
   text-align: center;
   color: #94a3b8;
   font-size: 14px;
+}
+
+/* Printer Settings Overview Card (when opened via F12 / Header Status) */
+.app-print-settings-card {
+  width: 520px;
+  max-width: 92vw;
+  background: rgba(24, 24, 27, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  padding: 26px 28px;
+  color: #f1f5f9;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  margin-top: 24px;
+}
+
+.app-print-settings-card-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #ffffff;
+  margin: 0 0 6px 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-print-settings-card-sub {
+  font-size: 12.5px;
+  color: #94a3b8;
+  margin: 0 0 20px 0;
+  line-height: 1.5;
+}
+
+.app-print-settings-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.app-print-settings-item {
+  background: rgba(39, 39, 42, 0.75);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 13px 16px;
+}
+
+.app-print-settings-item.is-highlight {
+  border-color: rgba(16, 185, 129, 0.35);
+  background: rgba(16, 185, 129, 0.08);
+}
+
+.app-print-settings-item-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #94a3b8;
+  margin-bottom: 4px;
+}
+
+.app-print-settings-item-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: #f8fafc;
+  word-break: break-word;
+}
+
+.app-print-settings-item-meta {
+  font-size: 11.5px;
+  color: #64748b;
+  margin-top: 3px;
 }

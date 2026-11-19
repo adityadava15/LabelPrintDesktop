@@ -38,8 +38,8 @@ namespace PCBBarcodePrintInstaller
 
         private void InitializeUI()
         {
-            this.Text = "PCB Barcode Print - Setup";
-            this.Size = new Size(540, 440);
+            this.Text = "PCB Barcode Print v2.4 - Setup";
+            this.Size = new Size(580, 490);
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.StartPosition = FormStartPosition.CenterScreen;
@@ -62,16 +62,43 @@ namespace PCBBarcodePrintInstaller
             Panel headerPanel = new Panel
             {
                 Dock = DockStyle.Top,
-                Height = 85,
+                Height = 90,
                 BackColor = Color.FromArgb(15, 23, 42) // Dark Slate #0F172A
             };
+
+            // App Logo Box
+            PictureBox picLogo = new PictureBox
+            {
+                Location = new Point(20, 18),
+                Size = new Size(54, 54),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.Transparent
+            };
+            try
+            {
+                using (Stream s = Assembly.GetExecutingAssembly().GetManifestResourceStream("app_logo.png"))
+                {
+                    if (s != null)
+                    {
+                        picLogo.Image = Image.FromStream(s);
+                    }
+                    else if (this.Icon != null)
+                    {
+                        picLogo.Image = this.Icon.ToBitmap();
+                    }
+                }
+            }
+            catch
+            {
+                if (this.Icon != null) picLogo.Image = this.Icon.ToBitmap();
+            }
 
             Label lblTitle = new Label
             {
                 Text = "PCB Barcode Print",
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 15, FontStyle.Bold),
-                Location = new Point(20, 16),
+                Location = new Point(86, 18),
                 AutoSize = true
             };
 
@@ -79,20 +106,23 @@ namespace PCBBarcodePrintInstaller
             {
                 Text = "Sistem Cetak Barcode PCB, EV Charger, Nameplate & Custom Label",
                 ForeColor = Color.FromArgb(56, 189, 248), // Sky Blue #38BDF8
-                Font = new Font("Segoe UI", 9.5f, FontStyle.Regular),
-                Location = new Point(22, 46),
+                Font = new Font("Segoe UI", 9f, FontStyle.Regular),
+                Location = new Point(88, 48),
                 AutoSize = true
             };
 
             Label lblVersion = new Label
             {
-                Text = "v2.0 Standalone",
-                ForeColor = Color.FromArgb(148, 163, 184),
-                Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
-                Location = new Point(430, 20),
-                AutoSize = true
+                Text = "v2.4 Studio",
+                ForeColor = Color.FromArgb(147, 197, 253),
+                BackColor = Color.FromArgb(30, 58, 138),
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                Location = new Point(460, 20),
+                AutoSize = true,
+                Padding = new Padding(6, 3, 6, 3)
             };
 
+            headerPanel.Controls.Add(picLogo);
             headerPanel.Controls.Add(lblTitle);
             headerPanel.Controls.Add(lblSubtitle);
             headerPanel.Controls.Add(lblVersion);
@@ -101,10 +131,10 @@ namespace PCBBarcodePrintInstaller
             // 2. Main Content Container
             Panel contentPanel = new Panel
             {
-                Location = new Point(0, 85),
-                Size = new Size(540, 255),
+                Location = new Point(0, 90),
+                Size = new Size(580, 335),
                 BackColor = Color.White,
-                Padding = new Padding(24, 16, 24, 10)
+                Padding = new Padding(24, 12, 24, 10)
             };
 
             Label lblPathDesc = new Label
@@ -112,7 +142,7 @@ namespace PCBBarcodePrintInstaller
                 Text = "Folder Lokasi Instalasi:",
                 Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
                 ForeColor = Color.FromArgb(30, 41, 59),
-                Location = new Point(24, 14),
+                Location = new Point(24, 12),
                 AutoSize = true
             };
 
@@ -120,8 +150,8 @@ namespace PCBBarcodePrintInstaller
             {
                 Text = @"C:\PCBBarcodePrint",
                 Font = new Font("Segoe UI", 10),
-                Location = new Point(24, 38),
-                Size = new Size(375, 26),
+                Location = new Point(24, 34),
+                Size = new Size(415, 26),
                 BorderStyle = BorderStyle.FixedSingle
             };
 
@@ -129,8 +159,8 @@ namespace PCBBarcodePrintInstaller
             {
                 Text = "Pilih...",
                 Font = new Font("Segoe UI", 9),
-                Location = new Point(410, 36),
-                Size = new Size(95, 29),
+                Location = new Point(448, 33),
+                Size = new Size(95, 28),
                 BackColor = Color.FromArgb(241, 245, 249),
                 FlatStyle = FlatStyle.Flat
             };
@@ -148,6 +178,23 @@ namespace PCBBarcodePrintInstaller
                 }
             };
 
+            // Version info banner
+            Panel infoCard = new Panel
+            {
+                Location = new Point(24, 68),
+                Size = new Size(519, 44),
+                BackColor = Color.FromArgb(240, 249, 255)
+            };
+            Label lblInfo = new Label
+            {
+                Text = "✨ Versi 2.4: Studio UI Modern, Mode Offline & Database, Windows Printer Sync, dan Layout Cetak Modem 2mm.",
+                Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
+                ForeColor = Color.FromArgb(3, 105, 161),
+                Dock = DockStyle.Fill,
+                Padding = new Padding(8, 6, 8, 6)
+            };
+            infoCard.Controls.Add(lblInfo);
+
             // Option Checkboxes
             chkDesktopShortcut = new CheckBox
             {
@@ -155,7 +202,7 @@ namespace PCBBarcodePrintInstaller
                 Checked = true,
                 Font = new Font("Segoe UI", 9.5f),
                 ForeColor = Color.FromArgb(51, 65, 85),
-                Location = new Point(24, 82),
+                Location = new Point(24, 122),
                 AutoSize = true
             };
 
@@ -165,7 +212,7 @@ namespace PCBBarcodePrintInstaller
                 Checked = true,
                 Font = new Font("Segoe UI", 9.5f),
                 ForeColor = Color.FromArgb(51, 65, 85),
-                Location = new Point(24, 110),
+                Location = new Point(24, 148),
                 AutoSize = true
             };
 
@@ -175,24 +222,24 @@ namespace PCBBarcodePrintInstaller
                 Checked = true,
                 Font = new Font("Segoe UI", 9.5f),
                 ForeColor = Color.FromArgb(51, 65, 85),
-                Location = new Point(24, 138),
+                Location = new Point(24, 174),
                 AutoSize = true
             };
 
             // Status and Progress
             lblStatus = new Label
             {
-                Text = "Aplikasi siap diinstal. Klik 'Instal Sekarang' untuk melanjutkan.",
+                Text = "Aplikasi siap diinstal. Klik 'Instal Sekarang' untuk memulai proses.",
                 Font = new Font("Segoe UI", 9f),
                 ForeColor = Color.FromArgb(100, 116, 139),
-                Location = new Point(24, 180),
-                Size = new Size(480, 20)
+                Location = new Point(24, 210),
+                Size = new Size(519, 20)
             };
 
             progressBar = new ProgressBar
             {
-                Location = new Point(24, 205),
-                Size = new Size(480, 22),
+                Location = new Point(24, 234),
+                Size = new Size(519, 22),
                 Minimum = 0,
                 Maximum = 100,
                 Value = 0
@@ -201,6 +248,7 @@ namespace PCBBarcodePrintInstaller
             contentPanel.Controls.Add(lblPathDesc);
             contentPanel.Controls.Add(txtInstallPath);
             contentPanel.Controls.Add(btnBrowse);
+            contentPanel.Controls.Add(infoCard);
             contentPanel.Controls.Add(chkDesktopShortcut);
             contentPanel.Controls.Add(chkStartMenuShortcut);
             contentPanel.Controls.Add(chkLaunchAfter);
@@ -228,7 +276,7 @@ namespace PCBBarcodePrintInstaller
             {
                 Text = "Batal",
                 Font = new Font("Segoe UI", 9.5f),
-                Location = new Point(310, 14),
+                Location = new Point(330, 14),
                 Size = new Size(95, 34),
                 BackColor = Color.White,
                 FlatStyle = FlatStyle.Flat
@@ -241,7 +289,7 @@ namespace PCBBarcodePrintInstaller
                 Text = "Instal Sekarang",
                 Font = new Font("Segoe UI", 10f, FontStyle.Bold),
                 ForeColor = Color.White,
-                Location = new Point(415, 14),
+                Location = new Point(435, 14),
                 Size = new Size(130, 34),
                 BackColor = Color.FromArgb(37, 99, 235), // Blue #2563EB
                 FlatStyle = FlatStyle.Flat,
@@ -331,7 +379,35 @@ namespace PCBBarcodePrintInstaller
                 Directory.CreateDirectory(targetDir);
             }
 
-            // Get embedded payload
+            // 1. Close any running instances of PCBBarcodePrint to prevent file locking
+            worker.ReportProgress(4, "Menutup proses PCB Barcode Print yang sedang aktif...");
+            try
+            {
+                foreach (var proc in Process.GetProcessesByName("PCBBarcodePrint"))
+                {
+                    try { proc.Kill(); proc.WaitForExit(1500); } catch { }
+                }
+            }
+            catch { }
+
+            // 2. Clean old Chromium caches in target directory so user never sees stale UI
+            worker.ReportProgress(8, "Membersihkan cache versi lama...");
+            try
+            {
+                string[] profiles = new string[] { "profile", "profile_chrome" };
+                string[] cacheFolders = new string[] { "Cache", "Code Cache", "GPUCache" };
+                foreach (string prof in profiles)
+                {
+                    foreach (string cf in cacheFolders)
+                    {
+                        string dir = Path.Combine(targetDir, "data", prof, "Default", cf);
+                        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+                    }
+                }
+            }
+            catch { }
+
+            // 3. Extract embedded payload
             Assembly asm = Assembly.GetExecutingAssembly();
             using (Stream resStream = asm.GetManifestResourceStream("payload.zip"))
             {
@@ -347,9 +423,10 @@ namespace PCBBarcodePrintInstaller
 
                     foreach (ZipArchiveEntry entry in archive.Entries)
                     {
-                        string destPath = Path.Combine(targetDir, entry.FullName);
+                        string safeRelPath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+                        string destPath = Path.Combine(targetDir, safeRelPath);
 
-                        if (string.IsNullOrEmpty(entry.Name))
+                        if (entry.FullName.EndsWith("/") || entry.FullName.EndsWith("\\") || string.IsNullOrEmpty(entry.Name))
                         {
                             // Directory
                             Directory.CreateDirectory(destPath);
@@ -358,7 +435,7 @@ namespace PCBBarcodePrintInstaller
                         {
                             // File
                             string parentDir = Path.GetDirectoryName(destPath);
-                            if (!Directory.Exists(parentDir))
+                            if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
                             {
                                 Directory.CreateDirectory(parentDir);
                             }
@@ -367,43 +444,50 @@ namespace PCBBarcodePrintInstaller
                         }
 
                         count++;
-                        int progress = (int)((count / (float)total) * 85) + 10;
-                        worker.ReportProgress(progress, "Mengekstrak: " + entry.Name);
+                        int progress = (int)((count / (float)total) * 78) + 12;
+                        worker.ReportProgress(progress, "Mengekstrak (" + count + "/" + total + "): " + entry.Name);
                     }
                 }
             }
 
-            // Shortcuts
+            // 4. Create Shortcuts
             string exePath = Path.Combine(targetDir, "PCBBarcodePrint.exe");
             string iconPath = Path.Combine(targetDir, "favicon.ico");
 
             if (opts.CreateDesktopShortcut)
             {
-                worker.ReportProgress(96, "Membuat shortcut di Desktop...");
+                worker.ReportProgress(94, "Membuat shortcut di Desktop...");
                 string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                 string lnkPath = Path.Combine(desktopPath, "PCB Barcode Print.lnk");
-                CreateShortcut(lnkPath, exePath, targetDir, iconPath, "Sistem Cetak Barcode PCB & Label");
+                CreateShortcut(lnkPath, exePath, targetDir, iconPath, "Sistem Cetak Barcode PCB & Label v2.4");
             }
 
             if (opts.CreateStartMenuShortcut)
             {
-                worker.ReportProgress(98, "Membuat shortcut di Start Menu...");
+                worker.ReportProgress(97, "Membuat shortcut di Start Menu...");
                 string startMenuPath = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
                 string folderPath = Path.Combine(startMenuPath, "PCB Barcode Print");
                 if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
 
                 string lnkPath = Path.Combine(folderPath, "PCB Barcode Print.lnk");
-                CreateShortcut(lnkPath, exePath, targetDir, iconPath, "Sistem Cetak Barcode PCB & Label");
+                CreateShortcut(lnkPath, exePath, targetDir, iconPath, "Sistem Cetak Barcode PCB & Label v2.4");
             }
 
-            // Create clean Uninstaller script
+            // 5. Create clean Uninstaller script
             try
             {
                 string uninstallerBat = Path.Combine(targetDir, "Uninstall.bat");
                 string batContent = "@echo off\r\n" +
-                    "echo Menghapus PCB Barcode Print...\r\n" +
+                    "title Hapus PCB Barcode Print\r\n" +
+                    "echo ==========================================================\r\n" +
+                    "echo           UNINSTALLER PCB BARCODE PRINT v2.4               \r\n" +
+                    "echo ==========================================================\r\n" +
+                    "echo.\r\n" +
                     "set /p CONFIRM=Apakah Anda yakin ingin menghapus aplikasi ini? (Y/N): \r\n" +
                     "if /i \"%CONFIRM%\" neq \"Y\" exit /b\r\n" +
+                    "echo Menutup proses aplikasi jika sedang aktif...\r\n" +
+                    "taskkill /f /im PCBBarcodePrint.exe 2>nul\r\n" +
+                    "taskkill /f /im php.exe 2>nul\r\n" +
                     "del /f /q \"%USERPROFILE%\\Desktop\\PCB Barcode Print.lnk\" 2>nul\r\n" +
                     "rmdir /s /q \"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\PCB Barcode Print\" 2>nul\r\n" +
                     "echo Shortcut berhasil dihapus.\r\n" +
@@ -413,7 +497,7 @@ namespace PCBBarcodePrintInstaller
             }
             catch { }
 
-            worker.ReportProgress(100, "Instalasi selesai!");
+            worker.ReportProgress(100, "Instalasi PCB Barcode Print v2.4 selesai!");
         }
 
         private void Worker_ProgressChanged(object sender, ProgressChangedEventArgs e)
@@ -438,13 +522,13 @@ namespace PCBBarcodePrintInstaller
             }
 
             isFinished = true;
-            lblStatus.Text = "Instalasi berhasil! Aplikasi siap digunakan.";
+            lblStatus.Text = "Instalasi PCB Barcode Print v2.4 berhasil! Aplikasi siap digunakan.";
             lblStatus.ForeColor = Color.FromArgb(22, 101, 52); // Dark Green
             progressBar.Value = 100;
 
             btnCancel.Visible = false;
             btnInstall.Text = "Selesai";
-            btnInstall.Location = new Point(415, 14);
+            btnInstall.Location = new Point(435, 14);
             btnInstall.Enabled = true;
             chkLaunchAfter.Enabled = true;
         }

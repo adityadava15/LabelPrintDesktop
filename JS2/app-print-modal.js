@@ -15,14 +15,139 @@
   var isPrinting = false;
 
   // Print Settings State
+  var ROTATE_STORAGE_KEY = "app_print_rotate_180";
+  function isEdgeBrowser() {
+    return typeof navigator !== "undefined" && /\bEdg\//i.test(navigator.userAgent || "");
+  }
+  function getInitialRotate180() {
+    try {
+      var saved = localStorage.getItem(ROTATE_STORAGE_KEY);
+      if (saved === "1") return true;
+      if (saved === "0") return false;
+    } catch (e) {}
+    return isEdgeBrowser();
+  }
+
+  var APP_DEFAULT_PRINTER_KEY = "app_default_printer";
   var cachedPrinters = [];
   var selectedPrinter = null;
+  var appDefaultPrinter = "";
+  var windowsDefaultPrinter = "";
   var copies = 1;
   var layoutMode = "portrait";
+  var rotate180 = getInitialRotate180();
   var pagesMode = "all"; // 'all' or 'custom'
   var pageRangeStr = "";
   var allSheets = [];
   var activeSheetIndices = [];
+
+  function isSamePrinterName(a, b) {
+    if (!a || !b) return false;
+    return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+  }
+
+  function escapeHtmlStr(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function formatPrinterOptionLabel(p) {
+    var isReady = !!p.is_ready;
+    var isAppDef = isSamePrinterName(p.name, appDefaultPrinter);
+    var statusStr = isReady ? " (Ready)" : " [Offline]";
+    return (isAppDef ? "★ " : "") + p.name + statusStr + (isAppDef ? " — Default Software" : "");
+  }
+
+  function refreshSelectOptionLabels() {
+    var select = document.getElementById("appPrintPrinterSelect");
+    if (!select) return;
+    for (var i = 0; i < select.options.length; i++) {
+      var opt = select.options[i];
+      var found = cachedPrinters.find(function (p) { return p.name === opt.value; });
+      if (found) {
+        opt.textContent = formatPrinterOptionLabel(found);
+      }
+    }
+  }
+
+  function renderSettingsOverviewCard() {
+    if (!pagesContainerEl || allSheets.length > 0) return;
+    var selName = selectedPrinter ? selectedPrinter.name : "Memuat printer...";
+    var selStatus = selectedPrinter ? ((selectedPrinter.status || (selectedPrinter.is_ready ? "Ready" : "Offline")) + " • Port: " + (selectedPrinter.port || "-") + " • Driver: " + (selectedPrinter.driver || "Windows")) : "";
+    var appDefText = appDefaultPrinter ? ("★ " + appDefaultPrinter) : "Belum diatur (Klik 'Set as Default' di sebelah kiri)";
+    var winDefText = windowsDefaultPrinter || "Mengikuti pengaturan Windows";
+
+    pagesContainerEl.innerHTML = [
+      '<div class="app-print-settings-card">',
+      '  <h3 class="app-print-settings-card-title">🖨️ Pengaturan Default Printer Software</h3>',
+      '  <p class="app-print-settings-card-sub">Pilih printer yang ingin digunakan lalu klik <strong>Set as Default</strong>. Pengaturan ini tersimpan permanen di software ini sehingga saat login kembali Anda tidak perlu memilih printer lagi, dan <strong>tidak akan mengubah Default Printer di Windows</strong>.</p>',
+      '  <div class="app-print-settings-grid">',
+      '    <div class="app-print-settings-item">',
+      '      <div class="app-print-settings-item-label">Printer Dipilih Saat Ini</div>',
+      '      <div class="app-print-settings-item-val">' + escapeHtmlStr(selName) + '</div>',
+      '      <div class="app-print-settings-item-meta">' + escapeHtmlStr(selStatus) + '</div>',
+      '    </div>',
+      '    <div class="app-print-settings-item is-highlight">',
+      '      <div class="app-print-settings-item-label">Default Printer Software Ini (Otomatis Saat Login)</div>',
+      '      <div class="app-print-settings-item-val" style="color:#34d399;">' + escapeHtmlStr(appDefText) + '</div>',
+      '      <div class="app-print-settings-item-meta">Tersimpan khusus untuk aplikasi PCB Barcode Print</div>',
+      '    </div>',
+      '    <div class="app-print-settings-item">',
+      '      <div class="app-print-settings-item-label">Default Printer Windows (Tidak Diubah)</div>',
+      '      <div class="app-print-settings-item-val" style="color:#94a3b8;">' + escapeHtmlStr(winDefText) + '</div>',
+      '      <div class="app-print-settings-item-meta">Pengaturan printer bawaan Windows Anda tetap aman & tidak berubah</div>',
+      '    </div>',
+      '  </div>',
+      '</div>'
+    ].join("\n");
+  }
+
+  function updateDefaultPrinterUI(justSaved) {
+    var currentName = selectedPrinter ? selectedPrinter.name : "";
+    var isCurrentDefault = !!(currentName && appDefaultPrinter && isSamePrinterName(currentName, appDefaultPrinter));
+
+    var badge = document.getElementById("appPrintDefaultBadge");
+    if (badge) {
+      badge.style.display = isCurrentDefault ? "inline-flex" : "none";
+    }
+
+    var btnSetDef = document.getElementById("appPrintBtnSetDefault");
+    var iconEl = document.getElementById("appPrintSetDefaultIcon");
+    var textEl = document.getElementById("appPrintSetDefaultText");
+    if (btnSetDef && iconEl && textEl) {
+      if (isCurrentDefault) {
+        btnSetDef.classList.add("is-default-active");
+        iconEl.textContent = "★";
+        textEl.textContent = "Default Printer Software Ini (Aktif)";
+      } else {
+        btnSetDef.classList.remove("is-default-active");
+        iconEl.textContent = "☆";
+        textEl.textContent = "Set as Default (Khusus Software Ini)";
+      }
+    }
+
+    var noteEl = document.getElementById("appPrintDefaultInfoNote");
+    if (noteEl) {
+      if (justSaved && isCurrentDefault) {
+        noteEl.className = "app-print-default-note is-saved";
+        noteEl.textContent = "✓ Tersimpan! Otomatis dipakai saat login lagi (Default Windows tidak berubah).";
+      } else if (isCurrentDefault) {
+        noteEl.className = "app-print-default-note is-saved";
+        noteEl.textContent = "✓ Otomatis dipilih setiap login • Default Windows tetap: " + (windowsDefaultPrinter || "Tidak berubah");
+      } else if (appDefaultPrinter) {
+        noteEl.className = "app-print-default-note";
+        noteEl.textContent = "Default software saat ini: " + appDefaultPrinter + " • Klik tombol di atas untuk mengganti";
+      } else {
+        noteEl.className = "app-print-default-note";
+        noteEl.textContent = "Hanya untuk software ini • Tidak mengubah default printer di Windows";
+      }
+    }
+
+    renderSettingsOverviewCard();
+  }
 
   function createModalDOM() {
     if (document.getElementById("appPrintModalOverlay")) {
@@ -53,7 +178,10 @@
       '',
       '      <!-- 1. Printer Selection -->',
       '      <div class="app-print-control-group">',
-      '        <label class="app-print-field-label" for="appPrintPrinterSelect">Printer</label>',
+      '        <div class="app-print-label-row">',
+      '          <label class="app-print-field-label" for="appPrintPrinterSelect" style="margin-bottom:0;">Printer</label>',
+      '          <span id="appPrintDefaultBadge" class="app-print-default-badge" style="display:none;">★ Default Software</span>',
+      '        </div>',
       '        <div class="app-print-select-wrap">',
       '          <select id="appPrintPrinterSelect" class="app-print-select">',
       '            <option value="">Memuat printer Windows...</option>',
@@ -61,6 +189,13 @@
       '          <svg class="app-print-select-caret" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"></polyline></svg>',
       '        </div>',
       '        <div id="appPrintPrinterStatusDesc" class="app-print-status-hint">Mencari status printer...</div>',
+      '        <div class="app-print-default-actions">',
+      '          <button type="button" id="appPrintBtnSetDefault" class="app-print-btn-setdefault" title="Simpan sebagai Default Printer khusus untuk software ini (tidak mengubah Default Printer di Windows)">',
+      '            <span id="appPrintSetDefaultIcon" class="app-print-setdefault-icon">☆</span>',
+      '            <span id="appPrintSetDefaultText">Set as Default (Khusus Software Ini)</span>',
+      '          </button>',
+      '          <div id="appPrintDefaultInfoNote" class="app-print-default-note">Hanya untuk software ini • Tidak mengubah default printer di Windows</div>',
+      '        </div>',
       '      </div>',
       '',
       '      <!-- 2. Copies -->',
@@ -82,6 +217,15 @@
       '            <span>Landscape</span>',
       '          </label>',
       '        </div>',
+      '      </div>',
+      '',
+      '      <!-- 3b. Orientasi Keluar (Kompensasi Edge / Printer Label) -->',
+      '      <div class="app-print-control-group">',
+      '        <label class="app-print-checkbox-label" for="appPrintRotate180Chk">',
+      '          <input type="checkbox" id="appPrintRotate180Chk">',
+      '          <span>Putar Cetak 180° (Luruskan Printer)</span>',
+      '        </label>',
+      '        <div class="app-print-range-help" style="margin-left: 25px;">Otomatis aktif di Edge; di Google Chrome biarkan tidak dicentang</div>',
       '      </div>',
       '',
       '      <!-- 4. Pages / Pilih Halaman -->',
@@ -150,16 +294,28 @@
   }
 
   function setupEventListeners() {
-    // 1. Printer Select Dropdown
+    // 1. Printer Select Dropdown (Hanya pilih untuk sesi/dokumen ini, TIDAK mengubah default printer Windows)
     var printerSelect = document.getElementById("appPrintPrinterSelect");
     if (printerSelect) {
       printerSelect.addEventListener("change", function () {
         var printerName = printerSelect.value;
         var found = cachedPrinters.find(function (p) { return p.name === printerName; });
         if (found) {
-          AppPrinter.selectPrinter(found, true);
+          AppPrinter.selectPrinter(found, false);
         } else if (printerName) {
-          AppPrinter.selectPrinter({ name: printerName, is_ready: true }, true);
+          AppPrinter.selectPrinter({ name: printerName, is_ready: true }, false);
+        }
+      });
+    }
+
+    // 1b. Tombol Set as Default (Khusus Software Ini)
+    var btnSetDefault = document.getElementById("appPrintBtnSetDefault");
+    if (btnSetDefault) {
+      btnSetDefault.addEventListener("click", function () {
+        var select = document.getElementById("appPrintPrinterSelect");
+        var printerName = (select && select.value) ? select.value : (selectedPrinter ? selectedPrinter.name : "");
+        if (printerName) {
+          AppPrinter.setAsDefault(printerName);
         }
       });
     }
@@ -182,6 +338,18 @@
         updatePagesFilterAndTotal();
       });
     });
+
+    // 3b. Rotate 180 Toggle
+    var rotateChk = document.getElementById("appPrintRotate180Chk");
+    if (rotateChk) {
+      rotateChk.checked = rotate180;
+      rotateChk.addEventListener("change", function () {
+        rotate180 = !!rotateChk.checked;
+        try {
+          localStorage.setItem(ROTATE_STORAGE_KEY, rotate180 ? "1" : "0");
+        } catch (e) {}
+      });
+    }
 
     // 4. Pages Radios (All / Custom Range)
     var pagesRadios = document.querySelectorAll('input[name="appPrintPagesRadio"]');
@@ -211,7 +379,21 @@
     var btnExecute = document.getElementById("appPrintBtnExecute");
     if (btnExecute) {
       btnExecute.addEventListener("click", function () {
-        AppPrinter.print();
+        if (allSheets.length === 0) {
+          var select = document.getElementById("appPrintPrinterSelect");
+          var printerName = (select && select.value) ? select.value : (selectedPrinter ? selectedPrinter.name : "");
+          if (printerName) {
+            AppPrinter.setAsDefault(printerName).then(function () {
+              setTimeout(function () {
+                AppPrinter.close();
+              }, 350);
+            });
+          } else {
+            AppPrinter.close();
+          }
+        } else {
+          AppPrinter.print();
+        }
       });
     }
 
@@ -238,8 +420,20 @@
       if (!overlayEl || !overlayEl.classList.contains("is-open")) return;
       if (e.key === "Escape") {
         AppPrinter.close();
-      } else if (e.key === "Enter" && !e.target.matches("input[type='text'], textarea")) {
-        AppPrinter.print();
+      } else if (e.key === "Enter" && !e.target.matches("input[type='text'], textarea, select")) {
+        if (allSheets.length === 0) {
+          var select = document.getElementById("appPrintPrinterSelect");
+          var printerName = (select && select.value) ? select.value : (selectedPrinter ? selectedPrinter.name : "");
+          if (printerName) {
+            AppPrinter.setAsDefault(printerName).then(function () {
+              setTimeout(function () {
+                AppPrinter.close();
+              }, 350);
+            });
+          }
+        } else {
+          AppPrinter.print();
+        }
       }
     });
   }
@@ -379,6 +573,10 @@
       var radioPortrait = document.querySelector('input[name="appPrintLayoutRadio"][value="portrait"]');
       if (radioPortrait) radioPortrait.checked = true;
 
+      rotate180 = getInitialRotate180();
+      var rotateChk = document.getElementById("appPrintRotate180Chk");
+      if (rotateChk) rotateChk.checked = rotate180;
+
       // Titles
       var titleText = document.getElementById("appPrintPreviewTitleText");
       if (titleText) titleText.textContent = currentConfig.title || "Pratinjau Cetak Barcode";
@@ -414,6 +612,19 @@
         pagesContainerEl.appendChild(card);
       }
 
+      var btnLabel = document.getElementById("appPrintBtnLabel");
+      var summaryEl = document.getElementById("appPrintTotalSheets");
+      if (allSheets.length === 0) {
+        if (btnLabel) btnLabel.textContent = "Simpan Default & Tutup";
+        if (summaryEl) summaryEl.textContent = "Mode Pengaturan Default Printer Software";
+        renderSettingsOverviewCard();
+      } else {
+        if (btnLabel) btnLabel.textContent = "Cetak Langsung";
+      }
+
+      // Reset zoom to 100% before onRender so OfflineTextRenderer measures true 1:1 dimensions
+      this.resetZoom();
+
       // Execute onRender hook for Barcodes, QR, HD text
       if (typeof currentConfig.onRender === "function") {
         try {
@@ -432,7 +643,6 @@
       // Show Modal
       overlayEl.classList.add("is-open");
       document.body.style.overflow = "hidden";
-      this.resetZoom();
     },
 
     openHtml: function (fullHtml, title) {
@@ -450,6 +660,12 @@
 
       var sheets = [];
       var pageEls = doc.querySelectorAll(".page");
+      if (pageEls.length === 0) {
+        pageEls = doc.querySelectorAll(".print-page");
+      }
+      if (pageEls.length === 0) {
+        pageEls = doc.querySelectorAll(".ev-sn-sticker");
+      }
       if (pageEls.length > 0) {
         pageEls.forEach(function (p) {
           sheets.push(p.outerHTML);
@@ -472,8 +688,14 @@
       var labelCount = doc.querySelectorAll(".label, .barcode, .np-card, .ev-sn-card, .sticker").length;
       if (!labelCount) labelCount = sheets.length;
 
+      var pageSizeMatch = customStyles.match(/@page\s*\{[^}]*?\bsize\s*:\s*([^;\}]+)/i);
+      var detectedPageSize = pageSizeMatch ? pageSizeMatch[1].trim() : "";
+      var bodyClass = (doc.body && doc.body.className) ? doc.body.className : "";
+
       AppPrinter.open({
         title: pageTitle,
+        pageSize: detectedPageSize || undefined,
+        bodyClass: bodyClass,
         css: customStyles,
         sheets: sheets,
         totalLabels: labelCount,
@@ -497,10 +719,53 @@
       });
     },
 
-    syncPrinterToWindows: function (printerName) {
+    /**
+     * Menyimpan printer sebagai Default KHUSUS untuk software ini
+     * Tanpa mengubah setting Default Printer di Windows
+     */
+    setAsDefault: function (printerName) {
+      if (!printerName) return Promise.resolve(false);
+      appDefaultPrinter = printerName;
+      try {
+        localStorage.setItem(APP_DEFAULT_PRINTER_KEY, printerName);
+        localStorage.setItem("preferred_printer", printerName);
+      } catch (e) {}
+
+      cachedPrinters.forEach(function (p) {
+        p.is_app_default = isSamePrinterName(p.name, printerName);
+      });
+
+      refreshSelectOptionLabels();
+      updateDefaultPrinterUI(true);
+
+      var fd = new FormData();
+      fd.append("action", "set_app_default");
+      fd.append("name", printerName);
+      return fetch("api_printers.php", { method: "POST", body: fd })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data && data.windows_default_printer) {
+            windowsDefaultPrinter = data.windows_default_printer;
+          }
+          updateDefaultPrinterUI(true);
+          if (typeof global.updateStudioPrinterStatus === "function") {
+            global.updateStudioPrinterStatus();
+          }
+          return !!(data && data.success);
+        })
+        .catch(function (err) {
+          console.warn("Gagal menyimpan default printer aplikasi:", err);
+          return false;
+        });
+    },
+
+    /**
+     * Mengarahkan spooler sementara sesaat sebelum silent print
+     */
+    preparePrintOnWindows: function (printerName) {
       if (!printerName) return Promise.resolve(false);
       var fd = new FormData();
-      fd.append("action", "set_default");
+      fd.append("action", "prepare_print");
       fd.append("name", printerName);
       return fetch("api_printers.php", { method: "POST", body: fd })
         .then(function (res) { return res.json(); })
@@ -508,9 +773,33 @@
           return !!(data && data.success);
         })
         .catch(function (err) {
-          console.warn("Gagal sinkronisasi printer ke Windows:", err);
+          console.warn("Gagal menyiapkan printer untuk cetak:", err);
           return false;
         });
+    },
+
+    /**
+     * Mengembalikan Default Printer Windows ke setting asli pengguna segera setelah silent print
+     */
+    restoreWindowsDefaultPrinter: function () {
+      var fd = new FormData();
+      fd.append("action", "restore_windows_default");
+      return fetch("api_printers.php", { method: "POST", body: fd })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data && data.windows_default_printer) {
+            windowsDefaultPrinter = data.windows_default_printer;
+            updateDefaultPrinterUI(false);
+          }
+          return !!(data && data.success);
+        })
+        .catch(function () {
+          return false;
+        });
+    },
+
+    syncPrinterToWindows: function (printerName) {
+      return AppPrinter.setAsDefault(printerName);
     },
 
     loadPrinters: function () {
@@ -519,34 +808,78 @@
         .then(function (data) {
           if (data && data.success && Array.isArray(data.printers)) {
             cachedPrinters = data.printers;
+            windowsDefaultPrinter = (data.windows_default_printer || "").trim();
+
+            var serverAppDefault = (data.app_default_printer || "").trim();
+            var localAppDefault = "";
+            try {
+              localAppDefault = (localStorage.getItem(APP_DEFAULT_PRINTER_KEY) || "").trim();
+            } catch (e) {}
+
+            if (serverAppDefault) {
+              appDefaultPrinter = serverAppDefault;
+              try {
+                localStorage.setItem(APP_DEFAULT_PRINTER_KEY, serverAppDefault);
+                localStorage.setItem("preferred_printer", serverAppDefault);
+              } catch (e) {}
+            } else if (localAppDefault) {
+              appDefaultPrinter = localAppDefault;
+              // Sinkronkan ke server config agar tetap tersimpan saat login lagi
+              var fdSync = new FormData();
+              fdSync.append("action", "set_app_default");
+              fdSync.append("name", localAppDefault);
+              fetch("api_printers.php", { method: "POST", body: fdSync }).catch(function () {});
+            } else {
+              appDefaultPrinter = "";
+            }
+
             var select = document.getElementById("appPrintPrinterSelect");
             if (!select) return;
 
             select.innerHTML = "";
-            var pref = localStorage.getItem("preferred_printer");
+            var pref = "";
+            try {
+              pref = (localStorage.getItem("preferred_printer") || "").trim();
+            } catch (e) {}
+
             var targetFound = null;
+
+            // Prioritas 1: Default Printer Software yang sudah di-Set as Default
+            if (appDefaultPrinter) {
+              targetFound = cachedPrinters.find(function (p) {
+                return isSamePrinterName(p.name, appDefaultPrinter);
+              }) || null;
+            }
+
+            // Prioritas 2: Preferred printer terakhir jika belum ada default software
+            if (!targetFound && pref) {
+              targetFound = cachedPrinters.find(function (p) {
+                return isSamePrinterName(p.name, pref);
+              }) || null;
+            }
+
+            // Prioritas 3: Default Windows atau printer pertama
+            if (!targetFound) {
+              targetFound = cachedPrinters.find(function (p) {
+                return !!p.is_windows_default || !!p.is_default;
+              }) || cachedPrinters[0] || null;
+            }
 
             cachedPrinters.forEach(function (p) {
               var opt = document.createElement("option");
               opt.value = p.name;
-              var isReady = p.is_ready;
-              opt.textContent = p.name + (isReady ? " (Ready)" : " [Offline]");
-              if (pref && p.name === pref) {
+              opt.textContent = formatPrinterOptionLabel(p);
+              if (targetFound && p.name === targetFound.name) {
                 opt.selected = true;
-                targetFound = p;
-              } else if (!pref && p.is_default) {
-                opt.selected = true;
-                targetFound = p;
               }
               select.appendChild(opt);
             });
 
-            if (!targetFound && cachedPrinters.length > 0) {
-              targetFound = cachedPrinters[0];
-            }
-
             if (targetFound) {
-              AppPrinter.selectPrinter(targetFound, true);
+              // false = JANGAN ubah default printer di Windows
+              AppPrinter.selectPrinter(targetFound, false);
+            } else {
+              updateDefaultPrinterUI(false);
             }
           }
         })
@@ -555,10 +888,9 @@
         });
     },
 
-    selectPrinter: function (printer, syncToWindows) {
+    selectPrinter: function (printer, saveAsAppDefault) {
       if (!printer) return;
       selectedPrinter = printer;
-      localStorage.setItem("preferred_printer", printer.name);
 
       var select = document.getElementById("appPrintPrinterSelect");
       if (select && select.value !== printer.name) {
@@ -567,7 +899,10 @@
 
       var statusDesc = document.getElementById("appPrintPrinterStatusDesc");
       if (statusDesc) {
-        statusDesc.textContent = "Status: " + (printer.status || (printer.is_ready ? "Ready" : "Offline")) + " • Driver: " + (printer.driver || "Windows");
+        var isAppDef = isSamePrinterName(printer.name, appDefaultPrinter);
+        statusDesc.textContent = "Status: " + (printer.status || (printer.is_ready ? "Ready" : "Offline")) +
+          " • Port: " + (printer.port || "USB") +
+          (isAppDef ? " • ★ Default Software" : "");
         if (printer.is_ready) {
           statusDesc.className = "app-print-status-hint";
         } else {
@@ -575,13 +910,16 @@
         }
       }
 
-      if (syncToWindows) {
-        AppPrinter.syncPrinterToWindows(printer.name);
+      updateDefaultPrinterUI(false);
+
+      if (saveAsAppDefault) {
+        AppPrinter.setAsDefault(printer.name);
       }
     },
 
     /**
-     * Mengirim dokumen ke printer secara langsung tanpa menampilkan popup Windows Print
+     * Mengirim perintah cetak langsung ke printer Windows via backend DirectPrint.exe
+     * TANPA membuka jendela popup print browser (window.print) dan TANPA mengubah Default Printer Windows.
      */
     print: function () {
       if (!currentConfig || isPrinting || activeSheetIndices.length === 0) return;
@@ -597,75 +935,100 @@
       var select = document.getElementById("appPrintPrinterSelect");
       var targetPrinterName = (select && select.value) ? select.value : (selectedPrinter ? selectedPrinter.name : "");
 
-      if (btnLabel) btnLabel.textContent = "Menyiapkan printer...";
+      if (btnLabel) btnLabel.textContent = "Mengirim ke Printer...";
 
-      var doPrint = function () {
-        if (btnLabel) btnLabel.textContent = "Mencetak Langsung...";
+      var rawPageSize = (currentConfig.pageSize || "79.95mm 34.03mm").trim();
+      var twoLenMatch = rawPageSize.match(/^([0-9.]+\s*[a-z%]+)\s+([0-9.]+\s*[a-z%]+)$/i);
+      var finalPageSize = rawPageSize;
+      if (twoLenMatch) {
+        finalPageSize = (layoutMode === "landscape")
+          ? (twoLenMatch[2] + " " + twoLenMatch[1])
+          : (twoLenMatch[1] + " " + twoLenMatch[2]);
+      } else if (layoutMode && rawPageSize.toLowerCase().indexOf(layoutMode) === -1) {
+        finalPageSize = rawPageSize + " " + layoutMode;
+      }
+      var customCss = currentConfig.css || "";
+      var bodyClassAttr = currentConfig.bodyClass
+        ? ' class="' + String(currentConfig.bodyClass).replace(/"/g, "&quot;") + '"'
+        : "";
 
-        var frame = getHiddenIframe();
-        var frameDoc = frame.contentWindow || frame.contentDocument;
-        if (frameDoc.document) frameDoc = frameDoc.document;
+      var htmlParts = [];
+      htmlParts.push("<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>" + escapeHtmlStr(currentConfig.title || "Cetak Barcode") + "</title>");
+      htmlParts.push("<style>");
+      htmlParts.push("@page { size: " + finalPageSize + "; margin: 0 !important; }");
+      htmlParts.push("* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }");
+      htmlParts.push("html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; width: 100% !important; }");
+      htmlParts.push(customCss);
+      htmlParts.push("@page { size: " + finalPageSize + "; margin: 0 !important; }");
+      htmlParts.push("@media print { .print-page, .page, .ev-sn-sticker { break-after: page; page-break-after: always; } .print-page:last-child, .page:last-child, .ev-sn-sticker:last-child { break-after: auto; page-break-after: auto; } }");
+      if (rotate180) {
+        htmlParts.push("@media print { .page, .print-page, .ev-sn-sticker { transform: rotate(180deg) !important; transform-origin: center center !important; } }");
+      }
+      htmlParts.push("</style></head><body" + bodyClassAttr + ">");
 
-        var pageSize = currentConfig.pageSize || "79.95mm 34.03mm";
-        var customCss = currentConfig.css || "";
-
-        frameDoc.open();
-        frameDoc.write("<!DOCTYPE html><html><head><meta charset=\"UTF-8\"><title>" + (currentConfig.title || "Cetak Barcode") + "</title>");
-        frameDoc.write("<style>");
-        frameDoc.write("@page { size: " + pageSize + " " + layoutMode + "; margin: 0 !important; }");
-        frameDoc.write("* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }");
-        frameDoc.write("html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; width: 100% !important; }");
-        frameDoc.write(customCss);
-        frameDoc.write("</style></head><body>");
-
-        // Render only the active filtered sheets, multiplied by copies
-        var papers = pagesContainerEl.querySelectorAll(".app-print-sheet-paper");
-        for (var c = 0; c < copies; c++) {
-          for (var i = 0; i < activeSheetIndices.length; i++) {
-            var sheetIdx = activeSheetIndices[i];
-            if (papers && papers[sheetIdx]) {
-              frameDoc.write(papers[sheetIdx].innerHTML);
-            } else if (allSheets[sheetIdx]) {
-              frameDoc.write(allSheets[sheetIdx]);
-            }
+      var papers = pagesContainerEl.querySelectorAll(".app-print-sheet-paper");
+      for (var c = 0; c < copies; c++) {
+        for (var i = 0; i < activeSheetIndices.length; i++) {
+          var sheetIdx = activeSheetIndices[i];
+          if (papers && papers[sheetIdx]) {
+            htmlParts.push(papers[sheetIdx].innerHTML);
+          } else if (allSheets[sheetIdx]) {
+            htmlParts.push(allSheets[sheetIdx]);
           }
         }
-
-        frameDoc.write("</body></html>");
-        frameDoc.close();
-
-        setTimeout(function () {
-          try {
-            frame.contentWindow.focus();
-            frame.contentWindow.print();
-          } catch (err) {
-            console.error("Gagal menjalankan silent print:", err);
-          } finally {
-            setTimeout(function () {
-              isPrinting = false;
-              if (btnLabel) btnLabel.textContent = "Cetak Langsung";
-              if (btn) {
-                btn.disabled = false;
-                btn.style.opacity = "1";
-              }
-            }, 1200);
-          }
-        }, 300);
-      };
-
-      if (targetPrinterName) {
-        AppPrinter.syncPrinterToWindows(targetPrinterName).then(function () {
-          doPrint();
-        });
-      } else {
-        doPrint();
       }
+
+      htmlParts.push("</body></html>");
+      var fullPrintHtml = htmlParts.join("\n");
+
+      var fd = new FormData();
+      fd.append("action", "direct_print");
+      fd.append("printer", targetPrinterName);
+      fd.append("html", fullPrintHtml);
+
+      fetch("api_printers.php", { method: "POST", body: fd })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+          if (data && data.success) {
+            if (btnLabel) {
+              btnLabel.textContent = "✓ Terkirim ke Printer (" + (data.pages || activeSheetIndices.length) + " hal)";
+            }
+            var statusDesc = document.getElementById("appPrintPrinterStatusDesc");
+            if (statusDesc) {
+              statusDesc.className = "app-print-status-hint";
+              statusDesc.textContent = "✓ Perintah cetak berhasil dikirim langsung ke: " + (data.printer || targetPrinterName);
+            }
+          } else {
+            var errMsg = (data && data.error) ? data.error : "Gagal mengirim perintah cetak ke printer.";
+            alert("Gagal Mencetak: " + errMsg);
+            if (btnLabel) btnLabel.textContent = "Cetak Langsung";
+          }
+        })
+        .catch(function (err) {
+          console.error("Direct print error:", err);
+          alert("Terjadi kesalahan saat mengirim perintah ke printer.");
+          if (btnLabel) btnLabel.textContent = "Cetak Langsung";
+        })
+        .finally(function () {
+          setTimeout(function () {
+            isPrinting = false;
+            if (btnLabel) btnLabel.textContent = "Cetak Langsung";
+            if (btn) {
+              btn.disabled = false;
+              btn.style.opacity = "1";
+            }
+          }, 1100);
+        });
     },
 
     close: function () {
       if (overlayEl) {
         overlayEl.classList.remove("is-open");
         document.body.style.overflow = "";
+      }
+      var styleTag = document.getElementById("appPrintInjectedStyles");
+      if (styleTag) {
+        styleTag.textContent = "";
       }
     },
 

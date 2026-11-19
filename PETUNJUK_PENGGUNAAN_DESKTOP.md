@@ -9,17 +9,18 @@ Aplikasi Desktop standalone untuk sistem cetak barcode PCB, EV Charger, Nameplat
 Untuk mencoba atau memasang aplikasi di PC lain tanpa membawa file sampah/cache browser yang besar (sebelumnya mencapai 565 MB), gunakan file yang sudah siap di dalam folder **`dist/`**:
 
 1. **`Setup_PCBBarcodePrint.exe` (~26 MB)** *(Sangat Direkomendasikan)*:
-   - Installer grafis mandiri (Setup Wizard).
+   - Installer grafis mandiri (Setup Wizard v2.4).
    - Memilih folder tujuan (default `C:\PCBBarcodePrint`).
+   - Otomatis menutup instans aplikasi lama dan membersihkan cache browser usang saat instalasi ulang/update.
    - Otomatis membuat shortcut di **Desktop** dan **Start Menu**.
    - Otomatis membuat script **Uninstall.bat**.
    - Opsi langsung menjalankan aplikasi setelah selesai instalasi.
 
 2. **`Setup_PCBBarcodePrint_UltraCompact.exe` (~16 MB)**:
-   - Installer kompresi ultra-tinggi berbasis SFX. Ukuran paling kecil (~16 MB) untuk dikirim lewat chat/email/flashdisk.
+   - Installer kompresi ultra-tinggi berbasis SFX v2.4. Ukuran paling kecil (~16 MB) untuk dikirim lewat chat/email/flashdisk.
 
-3. **`PCBBarcodePrint_v2.0_Portable.zip` (~25 MB)**:
-   - Paket portable tanpa instalasi. Cukup ekstrak di folder mana saja di PC lain lalu langsung jalankan `PCBBarcodePrint.exe`.
+3. **`PCBBarcodePrint_v2.4_Portable.zip` (~25 MB)**:
+   - Paket portable tanpa instalasi. Cukup ekstrak di folder mana saja di PC lain lalu langsung jalankan `PCBBarcodePrint.exe`. (Tersedia juga alias nama `PCBBarcodePrint_v2.0_Portable.zip`).
 
 ### 🔄 Cara Membuat Ulang Installer:
 Cukup double-click **`Buat Installer.bat`** di folder utama. Script akan otomatis mengemas ulang aplikasi bersih dan memperbarui file installer di dalam folder `dist/`.
@@ -60,7 +61,8 @@ Koneksi database telah dipusatkan di file `db_config.json` dan dapat diatur lang
    - Jika koneksi database terputus/server offline, aplikasi akan otomatis mengarahkan ke halaman konfigurasi.
 
 2. **Preset Cepat:**
-   - **🏢 Server Kantor / Pabrik:** `192.168.88.254:3307`
+   - **🏢 Server Kantor:** `192.168.88.254:3307` (cadangan otomatis ke `192.168.2.254:3307`)
+   - **🏠 Server Kantor Lokal:** `192.168.2.254:3307` (cadangan otomatis ke `192.168.88.254:3307`)
    - **💻 Localhost MySQL:** `127.0.0.1:3306`
    - **⚡ Localhost Port 3307:** `127.0.0.1:3307`
 

@@ -6,25 +6,55 @@
 (function (global) {
   "use strict";
 
+  function isSamePrinter(a, b) {
+    if (!a || !b) return false;
+    return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
+  }
+
   function updateStudioPrinterStatus() {
     fetch("api_printers.php?action=list&t=" + Date.now())
       .then(function (res) { return res.json(); })
       .then(function (data) {
         if (data && data.success && Array.isArray(data.printers)) {
-          var pref = localStorage.getItem("preferred_printer");
+          var serverAppDef = (data.app_default_printer || "").trim();
+          var localAppDef = "";
+          var pref = "";
+          try {
+            localAppDef = (localStorage.getItem("app_default_printer") || "").trim();
+            pref = (localStorage.getItem("preferred_printer") || "").trim();
+          } catch (e) {}
+
+          var appDef = serverAppDef || localAppDef;
+          if (serverAppDef) {
+            try {
+              localStorage.setItem("app_default_printer", serverAppDef);
+              localStorage.setItem("preferred_printer", serverAppDef);
+            } catch (e) {}
+          } else if (localAppDef) {
+            var fd = new FormData();
+            fd.append("action", "set_app_default");
+            fd.append("name", localAppDef);
+            fetch("api_printers.php", { method: "POST", body: fd }).catch(function () {});
+          }
+
           var activeP = null;
-          if (pref) {
-            activeP = data.printers.find(function (p) { return p.name === pref; });
+          if (appDef) {
+            activeP = data.printers.find(function (p) { return isSamePrinter(p.name, appDef); });
+          }
+          if (!activeP && pref) {
+            activeP = data.printers.find(function (p) { return isSamePrinter(p.name, pref); });
           }
           if (!activeP) {
-            activeP = data.printers.find(function (p) { return p.is_default; }) || data.printers[0];
+            activeP = data.printers.find(function (p) { return p.is_default || p.is_windows_default; }) || data.printers[0];
           }
           if (activeP) {
             var isReady = activeP.is_ready;
             var port = activeP.port || "USB001";
             var statusStr = activeP.status || (isReady ? "Ready" : "Offline");
-            var txt = "Printer: " + activeP.name + " (" + statusStr + ") | Port: " + port;
-            var fullTxt = "● Printer: " + activeP.name + " | Status: " + statusStr + " | Port: " + port;
+            var isAppDefaultActive = !!(appDef && isSamePrinter(activeP.name, appDef));
+            var defaultBadge = isAppDefaultActive ? " ★ Default" : "";
+            var txt = "Printer: " + activeP.name + " (" + statusStr + ")" + defaultBadge + " | Port: " + port;
+            var fullTxt = "● Printer: " + activeP.name + defaultBadge + " | Status: " + statusStr + " | Port: " + port;
 
             var el1 = document.getElementById("headerPrinterStatusText");
             var el2 = document.getElementById("headerPrinterSubText");

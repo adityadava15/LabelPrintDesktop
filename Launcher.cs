@@ -150,7 +150,7 @@ namespace PCBBarcodePrint
 
             ContextMenu contextMenu = new ContextMenu();
             contextMenu.MenuItems.Add("Buka PCB Barcode Print", (s, e) => LaunchBrowserWindow("http://127.0.0.1:" + serverPort + "/index.php"));
-            contextMenu.MenuItems.Add("Pilih Mode (Database / Offline)", (s, e) => LaunchBrowserWindow("http://127.0.0.1:" + serverPort + "/mode_select.php"));
+            contextMenu.MenuItems.Add("Pilih Mode (Database / Offline)", (s, e) => LaunchBrowserWindow("http://127.0.0.1:" + serverPort + "/index.php?switch_mode=1"));
             contextMenu.MenuItems.Add("Pengaturan Database", (s, e) => LaunchBrowserWindow("http://127.0.0.1:" + serverPort + "/db_setup.php"));
             contextMenu.MenuItems.Add("Buka Folder Aplikasi", (s, e) => Process.Start("explorer.exe", appDir));
             contextMenu.MenuItems.Add("-");
@@ -169,7 +169,9 @@ namespace PCBBarcodePrint
         {
             try
             {
-                string profileDir = Path.Combine(appDir, "data", "profile");
+                bool isChrome = !string.IsNullOrEmpty(browserPath) &&
+                    string.Equals(Path.GetFileName(browserPath), "chrome.exe", StringComparison.OrdinalIgnoreCase);
+                string profileDir = Path.Combine(appDir, "data", isChrome ? "profile_chrome" : "profile");
                 if (!Directory.Exists(profileDir))
                 {
                     Directory.CreateDirectory(profileDir);
@@ -178,7 +180,7 @@ namespace PCBBarcodePrint
                 if (!string.IsNullOrEmpty(browserPath) && File.Exists(browserPath))
                 {
                     string args = string.Format(
-                        "--app=\"{0}\" --user-data-dir=\"{1}\" --window-size=1366,768 --disable-infobars --no-first-run --no-default-browser-check --new-window --kiosk-printing",
+                        "--app=\"{0}\" --user-data-dir=\"{1}\" --window-size=1366,768 --disable-infobars --no-first-run --no-default-browser-check --new-window --kiosk-printing --no-proxy-server",
                         url,
                         profileDir
                     );
@@ -225,12 +227,14 @@ namespace PCBBarcodePrint
 
         private static string FindBrowser()
         {
+            string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             string[] candidates = new string[]
             {
-                @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-                @"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
                 @"C:\Program Files\Google\Chrome\Application\chrome.exe",
-                @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+                @"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+                Path.Combine(localAppData, @"Google\Chrome\Application\chrome.exe"),
+                @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                @"C:\Program Files\Microsoft\Edge\Application\msedge.exe"
             };
 
             foreach (string p in candidates)
