@@ -1193,23 +1193,40 @@
         '        <div class="app-safety-metric-value" id="appSafetyMetricJob">-</div>',
         '      </div>',
         '    </div>',
-        '    <div class="app-safety-reason-box">',
-        '      <div class="app-safety-section-title">⚠️ Penyebab Auto-Cancel Terdeteksi:</div>',
-        '      <p class="app-safety-reason-text" id="appSafetyReasonText">-</p>',
-        '    </div>',
-        '    <div class="app-safety-reason-box">',
-        '      <div class="app-safety-section-title">🛠️ Panduan Pemulihan sebelum Mencetak Kembali:</div>',
-        '      <ol class="app-safety-steps-list" id="appSafetyStepsList"></ol>',
+        '    <div class="app-safety-details-dropdown" id="appSafetyDetailsDropdown">',
+        '      <div class="app-safety-reason-box">',
+        '        <div class="app-safety-section-title">⚠️ Penyebab Auto-Cancel Terdeteksi:</div>',
+        '        <p class="app-safety-reason-text" id="appSafetyReasonText">-</p>',
+        '      </div>',
+        '      <div class="app-safety-reason-box">',
+        '        <div class="app-safety-section-title">🛠️ Panduan Pemulihan sebelum Mencetak Kembali:</div>',
+        '        <ol class="app-safety-steps-list" id="appSafetyStepsList"></ol>',
+        '      </div>',
         '    </div>',
         '  </div>',
         '  <div class="app-safety-footer">',
-        '    <button type="button" class="app-safety-btn-secondary" id="appSafetyBtnPurge">🔄 Pastikan Antrean Kosong</button>',
-        '    <button type="button" class="app-safety-btn-primary" id="appSafetyBtnAck">✓ Mengerti, Tutup Peringatan</button>',
+        '    <div class="app-safety-footer-left">',
+        '      <button type="button" class="app-safety-btn-secondary" id="appSafetyBtnPurge">🔄 Pastikan Antrean Kosong</button>',
+        '    </div>',
+        '    <div class="app-safety-footer-right">',
+        '      <button type="button" class="app-safety-btn-detail" id="appSafetyBtnToggleDetail">Show Detail ▾</button>',
+        '      <button type="button" class="app-safety-btn-primary" id="appSafetyBtnAck">✓ Mengerti, Tutup</button>',
+        '    </div>',
         '  </div>',
         '</div>'
       ].join("\n");
 
       document.body.appendChild(wrap);
+
+      var btnToggleDetail = document.getElementById("appSafetyBtnToggleDetail");
+      var detailsDropdown = document.getElementById("appSafetyDetailsDropdown");
+      if (btnToggleDetail && detailsDropdown) {
+        btnToggleDetail.addEventListener("click", function () {
+          var isExpanded = detailsDropdown.classList.toggle("is-expanded");
+          btnToggleDetail.classList.toggle("is-active", isExpanded);
+          btnToggleDetail.textContent = isExpanded ? "Hide Detail ▴" : "Show Detail ▾";
+        });
+      }
 
       var btnAck = document.getElementById("appSafetyBtnAck");
       if (btnAck) {
@@ -1271,6 +1288,16 @@
       var reasonText = document.getElementById("appSafetyReasonText");
       var stepsList = document.getElementById("appSafetyStepsList");
       var btnPurge = document.getElementById("appSafetyBtnPurge");
+      var detailsDropdown = document.getElementById("appSafetyDetailsDropdown");
+      var btnToggleDetail = document.getElementById("appSafetyBtnToggleDetail");
+
+      if (detailsDropdown) {
+        detailsDropdown.classList.remove("is-expanded");
+      }
+      if (btnToggleDetail) {
+        btnToggleDetail.classList.remove("is-active");
+        btnToggleDetail.textContent = "Show Detail ▾";
+      }
 
       if (btnPurge) {
         btnPurge.textContent = "🔄 Pastikan Antrean Kosong";
