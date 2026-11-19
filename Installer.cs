@@ -6,6 +6,8 @@ using System.Diagnostics;
 using System.Windows.Forms;
 using System.ComponentModel;
 using System.IO.Compression;
+using System.Collections.Generic;
+using Microsoft.Win32;
 
 namespace PCBBarcodePrintInstaller
 {
@@ -18,10 +20,13 @@ namespace PCBBarcodePrintInstaller
         private CheckBox chkLaunchAfter;
         private ProgressBar progressBar;
         private Label lblStatus;
+        private Label lblInfo;
+        private Panel infoCard;
         private Button btnInstall;
         private Button btnCancel;
         private BackgroundWorker worker;
         private bool isFinished = false;
+        private bool lastActionWasUpdate = false;
 
         [STAThread]
         public static void Main()
@@ -148,12 +153,13 @@ namespace PCBBarcodePrintInstaller
 
             txtInstallPath = new TextBox
             {
-                Text = @"C:\PCBBarcodePrint",
+                Text = DetectExistingInstallPath(),
                 Font = new Font("Segoe UI", 10),
                 Location = new Point(24, 34),
                 Size = new Size(415, 26),
                 BorderStyle = BorderStyle.FixedSingle
             };
+            txtInstallPath.TextChanged += (s, e) => UpdateInstallModeUI();
 
             btnBrowse = new Button
             {
@@ -169,7 +175,7 @@ namespace PCBBarcodePrintInstaller
             {
                 using (FolderBrowserDialog fbd = new FolderBrowserDialog())
                 {
-                    fbd.Description = "Pilih folder untuk instalasi PCB Barcode Print:";
+                    fbd.Description = "Pilih folder untuk instalasi / update PCB Barcode Print:";
                     fbd.SelectedPath = txtInstallPath.Text;
                     if (fbd.ShowDialog() == DialogResult.OK)
                     {
@@ -179,15 +185,15 @@ namespace PCBBarcodePrintInstaller
             };
 
             // Version info banner
-            Panel infoCard = new Panel
+            infoCard = new Panel
             {
                 Location = new Point(24, 68),
                 Size = new Size(519, 44),
                 BackColor = Color.FromArgb(240, 249, 255)
             };
-            Label lblInfo = new Label
+            lblInfo = new Label
             {
-                Text = "✨ Versi 2.4: Studio UI Modern, Mode Offline & Database, Windows Printer Sync, dan Layout Cetak Modem 2mm.",
+                Text = "✨ Versi 2.4: Studio UI Modern, Mode Offline & Database, Direct Print Tanpa Popup, dan Default Printer Software.",
                 Font = new Font("Segoe UI", 8.5f, FontStyle.Regular),
                 ForeColor = Color.FromArgb(3, 105, 161),
                 Dock = DockStyle.Fill,
@@ -276,7 +282,7 @@ namespace PCBBarcodePrintInstaller
             {
                 Text = "Batal",
                 Font = new Font("Segoe UI", 9.5f),
-                Location = new Point(330, 14),
+                Location = new Point(320, 14),
                 Size = new Size(95, 34),
                 BackColor = Color.White,
                 FlatStyle = FlatStyle.Flat
@@ -289,8 +295,8 @@ namespace PCBBarcodePrintInstaller
                 Text = "Instal Sekarang",
                 Font = new Font("Segoe UI", 10f, FontStyle.Bold),
                 ForeColor = Color.White,
-                Location = new Point(435, 14),
-                Size = new Size(130, 34),
+                Location = new Point(425, 14),
+                Size = new Size(140, 34),
                 BackColor = Color.FromArgb(37, 99, 235), // Blue #2563EB
                 FlatStyle = FlatStyle.Flat,
                 Cursor = Cursors.Hand
@@ -310,6 +316,119 @@ namespace PCBBarcodePrintInstaller
             worker.DoWork += Worker_DoWork;
             worker.ProgressChanged += Worker_ProgressChanged;
             worker.RunWorkerCompleted += Worker_RunWorkerCompleted;
+
+            // Cek status instalasi saat form pertama kali dibuat
+            UpdateInstallModeUI();
+        }
+
+        private static bool IsExistingInstallation(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir)) return false;
+            try
+            {
+                if (!Directory.Exists(dir)) return false;
+                return File.Exists(Path.Combine(dir, "PCBBarcodePrint.exe")) ||
+                       File.Exists(Path.Combine(dir, "view.php")) ||
+                       File.Exists(Path.Combine(dir, "index.php"));
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string DetectExistingInstallPath()
+        {
+            // 1. Cek Registry lokasi instalasi sebelumnya
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\PCBBarcodePrint"))
+                {
+                    if (key != null)
+                    {
+                        string regPath = key.GetValue("InstallLocation") as string;
+                        if (!string.IsNullOrWhiteSpace(regPath) && IsExistingInstallation(regPath))
+                        {
+                            return regPath;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            // 2. Cek folder default C:\PCBBarcodePrint
+            string defaultDir = @"C:\PCBBarcodePrint";
+            if (IsExistingInstallation(defaultDir))
+            {
+                return defaultDir;
+            }
+
+            // 3. Cek dari shortcut Desktop jika sudah pernah dibuat sebelumnya
+            try
+            {
+                string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                string lnkPath = Path.Combine(desktopPath, "PCB Barcode Print.lnk");
+                if (File.Exists(lnkPath))
+                {
+                    Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+                    if (shellType != null)
+                    {
+                        dynamic shell = Activator.CreateInstance(shellType);
+                        dynamic shortcut = shell.CreateShortcut(lnkPath);
+                        string workDir = shortcut.WorkingDirectory as string;
+                        if (!string.IsNullOrWhiteSpace(workDir) && IsExistingInstallation(workDir))
+                        {
+                            return workDir;
+                        }
+                    }
+                }
+            }
+            catch { }
+
+            return defaultDir;
+        }
+
+        private void UpdateInstallModeUI()
+        {
+            if (isFinished || txtInstallPath == null || btnInstall == null || lblStatus == null) return;
+
+            string currentPath = txtInstallPath.Text.Trim();
+            bool exists = IsExistingInstallation(currentPath);
+
+            if (exists)
+            {
+                btnInstall.Text = "Update Software";
+                btnInstall.BackColor = Color.FromArgb(5, 150, 105); // Emerald Green #059669
+                lblStatus.Text = "Instalasi lama terdeteksi. Klik 'Update Software' untuk memperbarui aplikasi.";
+                lblStatus.ForeColor = Color.FromArgb(180, 83, 9); // Amber #B45309
+                if (infoCard != null) infoCard.BackColor = Color.FromArgb(254, 243, 199); // Warm Amber tint
+                if (lblInfo != null)
+                {
+                    lblInfo.ForeColor = Color.FromArgb(146, 64, 14);
+                    lblInfo.Text = "🔄 Terdeteksi PCB Barcode Print sudah terinstal di folder ini. Proses instalasi akan melakukan UPDATE (pengaturan database & default printer tetap aman).";
+                }
+                if (chkLaunchAfter != null)
+                {
+                    chkLaunchAfter.Text = "Jalankan PCB Barcode Print setelah update selesai";
+                }
+            }
+            else
+            {
+                btnInstall.Text = "Instal Sekarang";
+                btnInstall.BackColor = Color.FromArgb(37, 99, 235); // Blue #2563EB
+                lblStatus.Text = "Aplikasi siap diinstal. Klik 'Instal Sekarang' untuk memulai proses.";
+                lblStatus.ForeColor = Color.FromArgb(100, 116, 139);
+                if (infoCard != null) infoCard.BackColor = Color.FromArgb(240, 249, 255);
+                if (lblInfo != null)
+                {
+                    lblInfo.ForeColor = Color.FromArgb(3, 105, 161);
+                    lblInfo.Text = "✨ Versi 2.4: Studio UI Modern, Mode Offline & Database, Direct Print Tanpa Popup, dan Default Printer Software.";
+                }
+                if (chkLaunchAfter != null)
+                {
+                    chkLaunchAfter.Text = "Jalankan PCB Barcode Print setelah instalasi selesai";
+                }
+            }
         }
 
         private void BtnInstall_Click(object sender, EventArgs e)
@@ -342,6 +461,28 @@ namespace PCBBarcodePrintInstaller
                 return;
             }
 
+            // Cek apakah software sudah terinstal sebelumnya di lokasi tujuan
+            bool isUpdateMode = IsExistingInstallation(targetPath);
+            if (isUpdateMode)
+            {
+                DialogResult confirm = MessageBox.Show(
+                    "Aplikasi PCB Barcode Print terdeteksi sudah terinstal sebelumnya di:\n" +
+                    targetPath + "\n\n" +
+                    "Apakah Anda ingin melakukan UPDATE software (menimpa instalasi lama dengan versi terbaru)?\n\n" +
+                    "• Pengaturan koneksi database dan default printer software Anda akan tetap dipertahankan.",
+                    "Konfirmasi Update Software",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question
+                );
+
+                if (confirm != DialogResult.Yes)
+                {
+                    return;
+                }
+            }
+
+            lastActionWasUpdate = isUpdateMode;
+
             // Disable controls
             txtInstallPath.Enabled = false;
             btnBrowse.Enabled = false;
@@ -351,12 +492,14 @@ namespace PCBBarcodePrintInstaller
             btnInstall.Enabled = false;
             btnCancel.Enabled = false;
 
-            lblStatus.Text = "Menyiapkan instalasi...";
+            lblStatus.Text = isUpdateMode ? "Menyiapkan proses update software..." : "Menyiapkan instalasi...";
+            lblStatus.ForeColor = Color.FromArgb(30, 64, 175);
             progressBar.Value = 5;
 
             worker.RunWorkerAsync(new InstallOptions
             {
                 TargetDir = targetPath,
+                IsUpdate = isUpdateMode,
                 CreateDesktopShortcut = chkDesktopShortcut.Checked,
                 CreateStartMenuShortcut = chkStartMenuShortcut.Checked
             });
@@ -365,6 +508,7 @@ namespace PCBBarcodePrintInstaller
         private class InstallOptions
         {
             public string TargetDir { get; set; }
+            public bool IsUpdate { get; set; }
             public bool CreateDesktopShortcut { get; set; }
             public bool CreateStartMenuShortcut { get; set; }
         }
@@ -373,22 +517,69 @@ namespace PCBBarcodePrintInstaller
         {
             InstallOptions opts = (InstallOptions)e.Argument;
             string targetDir = opts.TargetDir;
+            bool isUpdate = opts.IsUpdate;
 
             if (!Directory.Exists(targetDir))
             {
                 Directory.CreateDirectory(targetDir);
             }
 
-            // 1. Close any running instances of PCBBarcodePrint to prevent file locking
+            // 1. Close any running instances of PCBBarcodePrint / DirectPrint / portable php to prevent file locking
             worker.ReportProgress(4, "Menutup proses PCB Barcode Print yang sedang aktif...");
             try
             {
-                foreach (var proc in Process.GetProcessesByName("PCBBarcodePrint"))
+                string[] procNames = new string[] { "PCBBarcodePrint", "DirectPrint" };
+                foreach (string pName in procNames)
                 {
-                    try { proc.Kill(); proc.WaitForExit(1500); } catch { }
+                    foreach (var proc in Process.GetProcessesByName(pName))
+                    {
+                        try { proc.Kill(); proc.WaitForExit(1500); } catch { }
+                    }
+                }
+
+                // Tutup juga proses php.exe yang berjalan dari folder instalasi target
+                string fullTargetNorm = Path.GetFullPath(targetDir).TrimEnd('\\', '/');
+                foreach (var proc in Process.GetProcessesByName("php"))
+                {
+                    try
+                    {
+                        string modPath = proc.MainModule.FileName;
+                        if (!string.IsNullOrEmpty(modPath) && modPath.StartsWith(fullTargetNorm, StringComparison.OrdinalIgnoreCase))
+                        {
+                            proc.Kill();
+                            proc.WaitForExit(1500);
+                        }
+                    }
+                    catch { }
                 }
             }
             catch { }
+
+            // 1b. Backup file konfigurasi pengguna saat mode Update agar setting database & printer tidak hilang
+            Dictionary<string, byte[]> preservedConfigs = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            if (isUpdate)
+            {
+                string[] configRelPaths = new string[]
+                {
+                    "db_config.json",
+                    @"data\printer_config.json",
+                    "type_meter_options.json",
+                    "ev_charger_type_options.json"
+                };
+
+                foreach (string rel in configRelPaths)
+                {
+                    try
+                    {
+                        string cfgFull = Path.Combine(targetDir, rel);
+                        if (File.Exists(cfgFull))
+                        {
+                            preservedConfigs[rel] = File.ReadAllBytes(cfgFull);
+                        }
+                    }
+                    catch { }
+                }
+            }
 
             // 2. Clean old Chromium caches in target directory so user never sees stale UI
             worker.ReportProgress(8, "Membersihkan cache versi lama...");
@@ -420,6 +611,7 @@ namespace PCBBarcodePrintInstaller
                 {
                     int total = archive.Entries.Count;
                     int count = 0;
+                    string actionVerb = isUpdate ? "Memperbarui" : "Mengekstrak";
 
                     foreach (ZipArchiveEntry entry in archive.Entries)
                     {
@@ -445,10 +637,44 @@ namespace PCBBarcodePrintInstaller
 
                         count++;
                         int progress = (int)((count / (float)total) * 78) + 12;
-                        worker.ReportProgress(progress, "Mengekstrak (" + count + "/" + total + "): " + entry.Name);
+                        worker.ReportProgress(progress, actionVerb + " (" + count + "/" + total + "): " + entry.Name);
                     }
                 }
             }
+
+            // 3b. Restore file konfigurasi pengguna yang di-backup saat mode Update
+            if (isUpdate && preservedConfigs.Count > 0)
+            {
+                foreach (var kvp in preservedConfigs)
+                {
+                    try
+                    {
+                        string cfgFull = Path.Combine(targetDir, kvp.Key);
+                        string parentDir = Path.GetDirectoryName(cfgFull);
+                        if (!string.IsNullOrEmpty(parentDir) && !Directory.Exists(parentDir))
+                        {
+                            Directory.CreateDirectory(parentDir);
+                        }
+                        File.WriteAllBytes(cfgFull, kvp.Value);
+                    }
+                    catch { }
+                }
+            }
+
+            // 3c. Simpan lokasi instalasi di Registry untuk deteksi update berikutnya
+            try
+            {
+                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(@"Software\PCBBarcodePrint"))
+                {
+                    if (key != null)
+                    {
+                        key.SetValue("InstallLocation", targetDir, RegistryValueKind.String);
+                        key.SetValue("Version", "2.4", RegistryValueKind.String);
+                        key.SetValue("UpdatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"), RegistryValueKind.String);
+                    }
+                }
+            }
+            catch { }
 
             // 4. Create Shortcuts
             string exePath = Path.Combine(targetDir, "PCBBarcodePrint.exe");
@@ -456,7 +682,7 @@ namespace PCBBarcodePrintInstaller
 
             if (opts.CreateDesktopShortcut)
             {
-                worker.ReportProgress(94, "Membuat shortcut di Desktop...");
+                worker.ReportProgress(94, "Memperbarui shortcut di Desktop...");
                 string desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
                 string lnkPath = Path.Combine(desktopPath, "PCB Barcode Print.lnk");
                 CreateShortcut(lnkPath, exePath, targetDir, iconPath, "Sistem Cetak Barcode PCB & Label v2.4");
@@ -464,7 +690,7 @@ namespace PCBBarcodePrintInstaller
 
             if (opts.CreateStartMenuShortcut)
             {
-                worker.ReportProgress(97, "Membuat shortcut di Start Menu...");
+                worker.ReportProgress(97, "Memperbarui shortcut di Start Menu...");
                 string startMenuPath = Environment.GetFolderPath(Environment.SpecialFolder.Programs);
                 string folderPath = Path.Combine(startMenuPath, "PCB Barcode Print");
                 if (!Directory.Exists(folderPath)) Directory.CreateDirectory(folderPath);
@@ -487,9 +713,11 @@ namespace PCBBarcodePrintInstaller
                     "if /i \"%CONFIRM%\" neq \"Y\" exit /b\r\n" +
                     "echo Menutup proses aplikasi jika sedang aktif...\r\n" +
                     "taskkill /f /im PCBBarcodePrint.exe 2>nul\r\n" +
+                    "taskkill /f /im DirectPrint.exe 2>nul\r\n" +
                     "taskkill /f /im php.exe 2>nul\r\n" +
                     "del /f /q \"%USERPROFILE%\\Desktop\\PCB Barcode Print.lnk\" 2>nul\r\n" +
                     "rmdir /s /q \"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\PCB Barcode Print\" 2>nul\r\n" +
+                    "reg delete \"HKCU\\Software\\PCBBarcodePrint\" /f 2>nul\r\n" +
                     "echo Shortcut berhasil dihapus.\r\n" +
                     "echo Silakan hapus folder ini secara manual untuk menyelesaikan pembersihan.\r\n" +
                     "pause\r\n";
@@ -497,7 +725,7 @@ namespace PCBBarcodePrintInstaller
             }
             catch { }
 
-            worker.ReportProgress(100, "Instalasi PCB Barcode Print v2.4 selesai!");
+            worker.ReportProgress(100, isUpdate ? "Update PCB Barcode Print v2.4 selesai!" : "Instalasi PCB Barcode Print v2.4 selesai!");
         }
 
         private void Worker_ProgressChanged(object sender, ProgressChangedEventArgs e)
@@ -513,24 +741,43 @@ namespace PCBBarcodePrintInstaller
         {
             if (e.Error != null)
             {
-                MessageBox.Show("Terjadi kesalahan saat instalasi: " + e.Error.Message, "Error Instalasi", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                string failTitle = lastActionWasUpdate ? "Error Update" : "Error Instalasi";
+                MessageBox.Show("Terjadi kesalahan: " + e.Error.Message, failTitle, MessageBoxButtons.OK, MessageBoxIcon.Error);
+                txtInstallPath.Enabled = true;
+                btnBrowse.Enabled = true;
+                chkDesktopShortcut.Enabled = true;
+                chkStartMenuShortcut.Enabled = true;
+                chkLaunchAfter.Enabled = true;
                 btnInstall.Enabled = true;
                 btnCancel.Enabled = true;
-                lblStatus.Text = "Instalasi gagal: " + e.Error.Message;
+                lblStatus.Text = (lastActionWasUpdate ? "Update gagal: " : "Instalasi gagal: ") + e.Error.Message;
                 lblStatus.ForeColor = Color.Red;
                 return;
             }
 
             isFinished = true;
-            lblStatus.Text = "Instalasi PCB Barcode Print v2.4 berhasil! Aplikasi siap digunakan.";
+            lblStatus.Text = lastActionWasUpdate
+                ? "✓ Update PCB Barcode Print v2.4 berhasil! Software telah diperbarui."
+                : "✓ Instalasi PCB Barcode Print v2.4 berhasil! Aplikasi siap digunakan.";
             lblStatus.ForeColor = Color.FromArgb(22, 101, 52); // Dark Green
             progressBar.Value = 100;
 
             btnCancel.Visible = false;
             btnInstall.Text = "Selesai";
-            btnInstall.Location = new Point(435, 14);
+            btnInstall.BackColor = Color.FromArgb(37, 99, 235);
+            btnInstall.Location = new Point(425, 14);
             btnInstall.Enabled = true;
             chkLaunchAfter.Enabled = true;
+
+            if (lastActionWasUpdate)
+            {
+                MessageBox.Show(
+                    "Software PCB Barcode Print berhasil di-update ke versi terbaru!\n\nKlik 'Selesai' untuk membuka aplikasi.",
+                    "Update Software Berhasil",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information
+                );
+            }
         }
 
         private static void CreateShortcut(string shortcutPath, string targetPath, string workingDir, string iconLocation, string description)
