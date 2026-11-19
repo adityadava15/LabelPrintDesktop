@@ -74,29 +74,8 @@
       });
   }
 
-  var currentActivePrinterName = "";
-
-  function pollBackgroundSafetyGuard() {
-    if (!currentActivePrinterName) return;
-    var fd = new FormData();
-    fd.append("action", "safety_watch");
-    fd.append("printer", currentActivePrinterName);
-    fd.append("active", "0");
-
-    fetch("api_printers.php", { method: "POST", body: fd })
-      .then(function (r) { return r.json(); })
-      .then(function (wData) {
-        if (!wData) return;
-        if (wData.safety_triggered && window.AppPrinter && typeof window.AppPrinter.showSafetyWarningModal === "function") {
-          window.AppPrinter.showSafetyWarningModal(wData);
-        }
-      })
-      .catch(function () {});
-  }
-
   function initStudioEvents() {
     updateStudioPrinterStatus();
-    setInterval(pollBackgroundSafetyGuard, 1500);
 
     // 1. Click on Header Printer Status opens Printer Settings Modal
     var box = document.getElementById("headerPrinterStatusBox");

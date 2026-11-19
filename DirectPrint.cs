@@ -302,6 +302,17 @@ namespace PCBBarcodePrint
             return true;
         }
 
+        /**
+         * Memastikan job print di spooler benar-benar berasal dari software PCB Barcode Print ini,
+         * sehingga job print dari aplikasi lain (Word, Excel, PDF, dll) TIDAK ikut terganggu atau di-cancel.
+         */
+        private static bool IsOurAppPrintJob(string docName)
+        {
+            if (string.IsNullOrEmpty(docName)) return false;
+            return docName.IndexOf("PCB Barcode Print", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   docName.IndexOf("PCBBarcodePrint", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         private static List<JOB_INFO_1> GetSpoolerJobs(IntPtr hPrinter)
         {
             List<JOB_INFO_1> list = new List<JOB_INFO_1>();
@@ -321,7 +332,7 @@ namespace PCBBarcodePrint
                     {
                         IntPtr pCur = new IntPtr(pBuf.ToInt64() + (i * sz));
                         JOB_INFO_1 ji = (JOB_INFO_1)Marshal.PtrToStructure(pCur, typeof(JOB_INFO_1));
-                        if ((ji.Status & (JOB_STATUS_DELETED | JOB_STATUS_DELETING)) == 0)
+                        if ((ji.Status & (JOB_STATUS_DELETED | JOB_STATUS_DELETING)) == 0 && IsOurAppPrintJob(ji.pDocument))
                         {
                             list.Add(ji);
                         }
@@ -340,6 +351,7 @@ namespace PCBBarcodePrint
             cancelledJobNames = "";
             if (hPrinter == IntPtr.Zero) return 0;
 
+            // Hanya ambil dan batalkan job milik software PCB Barcode Print ini saja
             List<JOB_INFO_1> jobs = GetSpoolerJobs(hPrinter);
             List<string> docNames = new List<string>();
             int cancelled = 0;
@@ -358,11 +370,6 @@ namespace PCBBarcodePrint
                 cancelled++;
                 string doc = string.IsNullOrEmpty(ji.pDocument) ? ("Job #" + ji.JobId) : (ji.pDocument + " (#" + ji.JobId + ")");
                 docNames.Add(doc);
-            }
-
-            if (hasAdminAccess && jobs.Count > 0)
-            {
-                try { SetPrinter(hPrinter, 0, IntPtr.Zero, PRINTER_CONTROL_PURGE); } catch { }
             }
 
             cancelledJobNames = string.Join(", ", docNames.ToArray());
