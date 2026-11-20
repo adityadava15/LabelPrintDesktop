@@ -1300,9 +1300,17 @@ w.document.write(`
   .page table tr:first-child .label {
     transform: translateY(1.9mm);
   }
+  .page table tr td.label:nth-child(2),
+  .page table tr td.label:nth-child(3) {
+    transform: translate(-0.2mm, 1.2mm);
+  }
+  .page table tr:first-child td.label:nth-child(2),
+  .page table tr:first-child td.label:nth-child(3) {
+    transform: translate(-0.2mm, 1.9mm);
+  }
   .label svg {
     width: 23.27mm;
-    height: 6.76mm;
+    height: 6.96mm;
     margin-bottom: 0px;
     shape-rendering: crispEdges;
     overflow: visible;
@@ -1310,7 +1318,7 @@ w.document.write(`
 	  .pcb-code-text {
 	    width: 100%;
 	    height: 9px;
-    margin-top: -3.4px;
+    margin-top: calc(-3.4px - 0.2mm);
     font-family: Calibri, Arial, sans-serif;
     font-size: 5.6pt;
     font-weight: 400;
@@ -1323,7 +1331,7 @@ w.document.write(`
 	    justify-content: space-between;
 	    width: 100%;
 	    height: 9px;
-	    margin-top: -3.4px;
+	    margin-top: calc(-3.4px - 0.2mm);
 	    gap: 1mm;
 	  }
 		  .ev-pcb-code-text {
@@ -1428,7 +1436,7 @@ w.document.write('<script>');
         foreach ($chunks as $pageIndex => $chunk) {
             foreach ($chunk as $i => $num) {
                 $id = "code{$pageIndex}_{$i}";
-                echo "w.document.write('JsBarcode(\"#{$id}\",\"{$num}\",{format:\"CODE128\",displayValue:false,fontSize:11,height:51,width:3});');\n";
+                echo "w.document.write('JsBarcode(\"#{$id}\",\"{$num}\",{format:\"CODE128\",displayValue:false,fontSize:11,height:53.5,width:3});');\n";
             }
         }
 ?>
@@ -3762,10 +3770,9 @@ if ($recordType === 'nameplate') {
     <div class="studio-header-top">
       <a href="view.php?menu=pcb" class="studio-brand">
         <div class="studio-brand-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="4" y1="5" x2="4" y2="19"></line><line x1="7" y1="5" x2="7" y2="19"></line><line x1="9" y1="5" x2="9" y2="19"></line><line x1="13" y1="5" x2="13" y2="19"></line><line x1="15" y1="5" x2="15" y2="19"></line><line x1="17" y1="5" x2="17" y2="19"></line><line x1="20" y1="5" x2="20" y2="19"></line></svg>
-          <span style="margin-left: 2px;">PCB</span>
+          <img src="IMG/Print%20Barcode%20Studio.svg" alt="Print Barcode Studio" class="studio-brand-icon-img">
         </div>
-        <span class="studio-brand-title">PCB Barcode Print <span class="studio-brand-version">v2.4</span></span>
+        <span class="studio-brand-version">v2.4</span>
       </a>
 
       <!-- Header Right: Printer status & Theme Toggle -->
@@ -3793,14 +3800,14 @@ if ($recordType === 'nameplate') {
       <a class="studio-nav-tab studio-logout-tab" href="Logout1.php">Logout</a>
     </div>
 
-    <!-- Row 3: Subbar for Light Mode (Reference Image 2) -->
-    <div class="studio-subbar" style="display: none;">
+    <!-- Row 3: Printer & Mode Subbar -->
+    <div class="studio-subbar">
       <div class="studio-subbar-left">
         <div id="headerPrinterSubDot" class="studio-printer-dot"></div>
         <span id="headerPrinterSubText">● Printer: Zebra ZD420 | Status: Connected | Port: USB001</span>
       </div>
       <div>
-        <span style="color: #64748b; font-size: 12px; font-weight: 500;">Admin Mode</span>
+        <span class="studio-subbar-mode">Admin Mode</span>
       </div>
     </div>
   </header>
@@ -5003,7 +5010,7 @@ if ($recordType === 'nameplate') {
               </div>
               <div style="display: flex; flex-direction: column;">
                 <label for="customCopyCount" style="display:block; margin-bottom:8px; font-weight:500;">Jumlah Copy</label>
-                <input type="number" id="customCopyCount" name="copy_count" value="1" min="1" oninput="updateCopyCountConstraint()" style="width:100%; border:1px solid var(--line-strong); border-radius:6px; padding:8px 12px; background:var(--card); font-size:1.1rem; box-sizing:border-box; height: 42px; font-weight: bold; text-align: center;">
+                <input type="number" id="customCopyCount" name="copy_count" value="1" min="1" oninput="updateCopyCountConstraint()" style="width:100%; border:1px solid var(--line-strong); border-radius:6px; padding:8px 12px; background:var(--content-panel-soft); color:var(--content-text); font-size:1.1rem; box-sizing:border-box; height: 42px; font-weight: bold; text-align: center;">
                 <span id="customCopyHelp" style="display:block; font-size:11px; color:var(--content-muted); margin-top:6px; line-height:1.3;"></span>
               </div>
             </div>
@@ -5641,40 +5648,11 @@ if ($recordType === 'nameplate') {
         })();
       </script>
       <script>
-        (function () {
-          var btn = document.getElementById("themeToggleBtn");
-          if (!btn) {
-            return;
+        try {
+          if (window.localStorage && window.localStorage.getItem("uiThemeMode") === "light") {
+            document.body.classList.add("light-theme");
           }
-          var storageKey = "uiThemeMode";
-          function applyTheme(theme) {
-            var isLight = theme === "light";
-            document.body.classList.toggle("light-theme", isLight);
-            btn.innerHTML = isLight ? "&#127769; Dark Mode" : "&#9728;&#65039; Light Mode";
-            btn.setAttribute("aria-pressed", isLight ? "true" : "false");
-          }
-          var currentTheme = "dark";
-          try {
-            if (window.localStorage) {
-              var saved = window.localStorage.getItem(storageKey);
-              if (saved === "light" || saved === "dark") {
-                currentTheme = saved;
-              }
-            }
-          } catch (err) {
-          }
-          applyTheme(currentTheme);
-          btn.addEventListener("click", function () {
-            currentTheme = currentTheme === "light" ? "dark" : "light";
-            applyTheme(currentTheme);
-            try {
-              if (window.localStorage) {
-                window.localStorage.setItem(storageKey, currentTheme);
-              }
-            } catch (err) {
-            }
-          });
-        })();
+        } catch (err) {}
       </script>
     </main>
   </div>
@@ -5790,9 +5768,17 @@ if ($recordType === 'nameplate') {
           .page table tr:first-child .label {
             transform: translateY(1.9mm);
           }
+          .page table tr td.label:nth-child(2),
+          .page table tr td.label:nth-child(3) {
+            transform: translate(-0.2mm, 1.2mm);
+          }
+          .page table tr:first-child td.label:nth-child(2),
+          .page table tr:first-child td.label:nth-child(3) {
+            transform: translate(-0.2mm, 1.9mm);
+          }
           .label svg {
             width: 23.27mm;
-            height: 6.76mm;
+            height: 6.96mm;
             margin-bottom: 0px;
             shape-rendering: crispEdges;
             overflow: visible;
@@ -5800,7 +5786,7 @@ if ($recordType === 'nameplate') {
           .pcb-code-text {
             width: 100%;
             height: 9px;
-            margin-top: -3.4px;
+            margin-top: calc(-3.4px - 0.2mm);
             font-family: Calibri, Arial, sans-serif;
             font-size: 5.6pt;
             font-weight: 400;
@@ -5853,6 +5839,10 @@ if ($recordType === 'nameplate') {
           }
           .page table tr:first-child .label.no-barcode {
             transform: none !important;
+          }
+          .page table tr td.label.no-barcode:nth-child(2),
+          .page table tr td.label.no-barcode:nth-child(3) {
+            transform: translateX(-0.2mm) !important;
           }
           .label.no-barcode .pcb-code-text {
             height: 14px;
@@ -6742,7 +6732,7 @@ if ($recordType === 'nameplate') {
           chunk.forEach(function(item, idx) {
             if (generateBarcode && item.main) {
               var id = "code_" + pageIndex + "_" + idx;
-              w.document.write('JsBarcode("#' + id + '", "' + escapeJs(item.main) + '", {format:"CODE128", displayValue:false, fontSize:11, height:52, width:3});');
+              w.document.write('JsBarcode("#' + id + '", "' + escapeJs(item.main) + '", {format:"CODE128", displayValue:false, fontSize:11, height:54.5, width:3});');
             }
           });
         });

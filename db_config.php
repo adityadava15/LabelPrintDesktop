@@ -264,6 +264,123 @@ function redirectToDbSetup($error = '') {
     exit;
 }
 
+function getAuthSecretKey() {
+    $dataDir = __DIR__ . DIRECTORY_SEPARATOR . 'data';
+    $keyFile = $dataDir . DIRECTORY_SEPARATOR . 'auth_secret.key';
+    if (file_exists($keyFile)) {
+        $existing = trim((string) @file_get_contents($keyFile));
+        if (strlen($existing) >= 32) {
+            return $existing;
+        }
+    }
+    if (!is_dir($dataDir)) {
+        @mkdir($dataDir, 0775, true);
+    }
+    $secret = bin2hex(random_bytes(32));
+    @file_put_contents($keyFile, $secret);
+    return $secret;
+}
+
+function getDashboardRedirectUrl() {
+    if (isset($_SESSION['app_mode']) && $_SESSION['app_mode'] === 'offline') {
+        return 'userview.php?menu=custom';
+    }
+    if (isset($_SESSION['role']) && $_SESSION['role'] === 'admin') {
+        return 'view.php';
+    }
+    return 'userview.php';
+}
+
+function clearRememberAuthCookies() {
+    $past = time() - 3600;
+    @setcookie('pcb_remember', '', $past, '/');
+    @setcookie('app_mode', '', $past, '/');
+    unset($_COOKIE['pcb_remember'], $_COOKIE['app_mode']);
+}
+
+function setRememberAuthCookie($username, $mode, $passwordHash = '') {
+    $exp = time() + (86400 * 30);
+    $payload = base64_encode(json_encode([
+        'u' => (string) $username,
+        'm' => (string) $mode,
+        'e' => $exp
+    ]));
+    $sig = hash_hmac('sha256', $payload . '|' . (string) $passwordHash, getAuthSecretKey());
+    $token = $payload . '.' . $sig;
+    @setcookie('pcb_remember', $token, $exp, '/', '', false, true);
+    $_COOKIE['pcb_remember'] = $token;
+}
+
+function tryAutoLoginFromRememberCookie() {
+    $raw = (string) ($_COOKIE['pcb_remember'] ?? '');
+    if ($raw === '' || strpos($raw, '.') === false) {
+        return false;
+    }
+
+    list($payload, $sig) = explode('.', $raw, 2);
+    $decoded = json_decode((string) base64_decode($payload, true), true);
+    if (!is_array($decoded) || empty($decoded['m']) || empty($decoded['e']) || (int) $decoded['e'] < time()) {
+        clearRememberAuthCookies();
+        return false;
+    }
+
+    $mode = (string) $decoded['m'];
+    $username = (string) ($decoded['u'] ?? '');
+
+    if ($mode === 'offline') {
+        $expectedSig = hash_hmac('sha256', $payload . '|', getAuthSecretKey());
+        if (!hash_equals($expectedSig, $sig)) {
+            clearRememberAuthCookies();
+            return false;
+        }
+        $_SESSION['app_mode'] = 'offline';
+        $_SESSION['username'] = 'Operator (Offline)';
+        $_SESSION['role'] = 'user';
+        return true;
+    }
+
+    if ($mode === 'database' && $username !== '') {
+        $activeHost = null;
+        $errMsg = '';
+        $usedFallback = false;
+        $conn = connectDbWithConfig(getDbConfig(), true, 2, $activeHost, $errMsg, $usedFallback);
+        if ($conn === false) {
+            return false;
+        }
+
+        $userRow = null;
+        $stmt = $conn->prepare("SELECT username, password, role FROM users WHERE username = ? LIMIT 1");
+        if ($stmt) {
+            $stmt->bind_param('s', $username);
+            if ($stmt->execute()) {
+                $res = $stmt->get_result();
+                $userRow = $res ? $res->fetch_assoc() : null;
+            }
+            $stmt->close();
+        }
+        $conn->close();
+
+        if (!$userRow) {
+            clearRememberAuthCookies();
+            return false;
+        }
+
+        $expectedSig = hash_hmac('sha256', $payload . '|' . (string) $userRow['password'], getAuthSecretKey());
+        if (!hash_equals($expectedSig, $sig)) {
+            clearRememberAuthCookies();
+            return false;
+        }
+
+        $_SESSION['app_mode'] = 'database';
+        $_SESSION['username'] = $userRow['username'];
+        $_SESSION['role'] = $userRow['role'];
+        return true;
+    }
+
+    clearRememberAuthCookies();
+    return false;
+}
+
 // Global variable for backward compatibility with existing code
 $currentScript = basename($_SERVER['SCRIPT_NAME'] ?? '');
 if (!defined('SKIP_AUTO_DB_CONNECT') && $currentScript !== 'db_setup.php') {

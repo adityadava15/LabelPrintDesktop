@@ -492,6 +492,39 @@
   overflow: hidden;
 }
 
+/* Prevent host-page .label preview card styles from leaking into print sheets */
+.app-print-sheet-paper td.label {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding-left: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  margin: 0;
+  color: #000000;
+  overflow: visible;
+}
+
+.app-print-sheet-paper td.label.no-barcode {
+  display: table-cell;
+  height: 100%;
+}
+
+.app-print-sheet-paper td.label > svg {
+  max-width: none;
+  display: inline;
+  margin: 0;
+}
+
+.app-print-sheet-paper .pcb-code-text svg,
+.app-print-sheet-paper .ev-pcb-code-text svg,
+.app-print-sheet-paper .ev-pcb-batch-text svg,
+.app-print-sheet-paper .pcb-custom-text svg,
+.app-print-sheet-paper .ev-pcb-custom-text svg {
+  display: block;
+}
+
 /* Landscape Mode Transform in Preview */
 .app-print-sheet-card.is-landscape {
   transform: rotate(0deg);

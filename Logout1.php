@@ -2,13 +2,25 @@
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
-$wasOffline = (isset($_SESSION['app_mode']) && $_SESSION['app_mode'] === 'offline');
-session_unset();
+
+define('SKIP_AUTO_DB_CONNECT', true);
+require_once __DIR__ . '/db_config.php';
+
+$_SESSION = [];
+if (ini_get('session.use_cookies')) {
+    $params = session_get_cookie_params();
+    @setcookie(
+        session_name(),
+        '',
+        time() - 42000,
+        $params['path'] ?: '/',
+        $params['domain'] ?: '',
+        !empty($params['secure']),
+        !empty($params['httponly'])
+    );
+}
 session_destroy();
 
-if ($wasOffline) {
-    header("Location: mode_select.php");
-} else {
-    header("Location: Login1.php");
-}
+clearRememberAuthCookies();
+header("Location: Login1.php");
 exit;

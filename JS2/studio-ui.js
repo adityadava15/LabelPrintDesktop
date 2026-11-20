@@ -152,15 +152,7 @@
       document.body.classList.toggle("light-theme", isLight);
       if (themeIcon) themeIcon.innerHTML = isLight ? "&#127769;" : "&#9728;&#65039;";
       if (themeText) themeText.textContent = isLight ? "Dark Mode" : "Light Mode";
-      
-      var subBarEl = document.querySelector(".studio-subbar");
-      if (subBarEl) {
-        subBarEl.style.display = isLight ? "flex" : "none";
-      }
-      var headerRightPrinter = document.getElementById("headerPrinterStatusBox");
-      if (headerRightPrinter) {
-        headerRightPrinter.style.display = isLight ? "none" : "flex";
-      }
+      if (themeBtn) themeBtn.setAttribute("aria-pressed", isLight ? "true" : "false");
     }
 
     var currentTheme = "dark";

@@ -36,6 +36,10 @@ if (isset($_GET['choose'])) {
         exit;
     }
 }
+
+// Mode selection is now built into Login1.php as a slide toggle
+header("Location: Login1.php");
+exit;
 ?>
 <!DOCTYPE html>
 <html lang="id">

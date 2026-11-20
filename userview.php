@@ -419,7 +419,9 @@ if (isset($_POST['print']) || isset($_POST['print_ev_charger'])) {
         }
 
         $printError = null;
-        if ($startIndex === -1 || $endIndex === -1) {
+        if (empty($unprintedRows)) {
+            $printError = "Batch EV Charger ini sudah di-record ke database seluruhnya dan tidak dapat di-print ulang oleh user biasa. Hanya Admin yang dapat mencetak ulang.";
+        } elseif ($startIndex === -1 || $endIndex === -1) {
             $printError = "Nomor awal atau nomor akhir tidak ditemukan dalam batch ini.";
         } elseif ($startIndex > $endIndex) {
             $printError = "Nomor akhir harus lebih besar atau sama dengan nomor awal.";
@@ -432,7 +434,7 @@ if (isset($_POST['print']) || isset($_POST['print_ev_charger'])) {
                 }
             }
             if (!empty($alreadyPrinted)) {
-                $printError = "Nomor " . $alreadyPrinted[0] . " sudah pernah di-print dan tidak dapat di-print ulang oleh user untuk mencegah duplikasi!";
+                $printError = "Nomor " . $alreadyPrinted[0] . " sudah pernah di-print dan di-record ke database sehingga tidak dapat di-print ulang oleh user biasa (hanya Admin).";
             }
         }
 
@@ -444,6 +446,14 @@ if (isset($_POST['print']) || isset($_POST['print_ev_charger'])) {
         $numbers = array_column($selectedRows, 'nomor');
         $printedRowIds = array_column($selectedRows, 'id');
     } else {
+        $checkPcbPrinted = $koneksi->query("SELECT COUNT(*) AS cnt FROM log_print WHERE batch_id=$batch_id");
+        $pcbPrintedRow = $checkPcbPrinted ? $checkPcbPrinted->fetch_assoc() : ['cnt' => 0];
+        if ((int) ($pcbPrintedRow['cnt'] ?? 0) > 0) {
+            $redirectUrl = "userview.php?menu=" . urlencode($menu) . "&wo=" . urlencode((string) ($_POST['wo'] ?? '')) . "&batch_id=" . (int) $batch_id;
+            echo "<script>alert('Batch ini sudah di-record ke database dan tidak dapat di-print ulang oleh user biasa. Hanya Admin yang dapat mencetak ulang.'); window.location.href = " . json_encode($redirectUrl) . ";</script>";
+            exit;
+        }
+
         $type_meter = isset($_POST['type_meter']) ? $koneksi->real_escape_string($_POST['type_meter']) : '';
         $date = date('d-m-Y', strtotime($dateInput));
         $customText = $type_meter . ' ' . $date . ' Batch ' . $batch_num;
@@ -529,9 +539,17 @@ w.document.write(`
   .page table tr:first-child .label {
     transform: translateY(1.9mm);
   }
+  .page table tr td.label:nth-child(2),
+  .page table tr td.label:nth-child(3) {
+    transform: translate(-0.2mm, 1.2mm);
+  }
+  .page table tr:first-child td.label:nth-child(2),
+  .page table tr:first-child td.label:nth-child(3) {
+    transform: translate(-0.2mm, 1.9mm);
+  }
   .label svg {
     width: 23.27mm;
-    height: 6.76mm;
+    height: 6.96mm;
     margin-bottom: 0px;
     shape-rendering: crispEdges;
     overflow: visible;
@@ -539,7 +557,7 @@ w.document.write(`
 	  .pcb-code-text {
 	    width: 100%;
 	    height: 9px;
-    margin-top: -3.4px;
+    margin-top: calc(-3.4px - 0.2mm);
     font-family: Calibri, Arial, sans-serif;
     font-size: 5.6pt;
     font-weight: 400;
@@ -552,7 +570,7 @@ w.document.write(`
 	    justify-content: space-between;
 	    width: 100%;
 	    height: 9px;
-	    margin-top: -3.4px;
+	    margin-top: calc(-3.4px - 0.2mm);
 	    gap: 1mm;
 	  }
 		  .ev-pcb-code-text {
@@ -660,7 +678,7 @@ w.document.write('<script>');
         foreach ($chunks as $pageIndex => $chunk) {
             foreach ($chunk as $i => $num) {
                 $id = "code{$pageIndex}_{$i}";
-                echo "w.document.write('JsBarcode(\"#{$id}\",\"{$num}\",{format:\"CODE128\",displayValue:false,fontSize:11,height:52,width:3});');\n";
+                echo "w.document.write('JsBarcode(\"#{$id}\",\"{$num}\",{format:\"CODE128\",displayValue:false,fontSize:11,height:54.5,width:3});');\n";
             }
         }
 ?>
@@ -688,6 +706,14 @@ if (isset($_POST['print_nameplate'])) {
     $batchMeta = $batchMetaRes ? $batchMetaRes->fetch_assoc() : null;
     $nameplateBatchName = $batchMeta ? $batchMeta['nama_batch'] : ('Batch ID ' . $batchIdNameplatePrint);
     $nameplateBatchWo = $batchMeta ? $batchMeta['wo'] : '';
+
+    $checkNpAlready = $koneksi->query("SELECT COUNT(*) AS cnt FROM nameplate_log_print WHERE batch_id=$batchIdNameplatePrint");
+    $npAlreadyRow = $checkNpAlready ? $checkNpAlready->fetch_assoc() : ['cnt' => 0];
+    if ((int) ($npAlreadyRow['cnt'] ?? 0) > 0) {
+        $redirectNpUrl = "userview.php?menu=nameplate&wo_np=" . urlencode($nameplateBatchWo) . "&batch_id_np=" . (int) $batchIdNameplatePrint . "&prod_date_np=" . urlencode($productionDateInput);
+        echo "<script>alert('Batch nameplate ini sudah di-record ke database dan tidak dapat di-print ulang oleh user biasa. Hanya Admin yang dapat mencetak ulang.'); window.location.href = " . json_encode($redirectNpUrl) . ";</script>";
+        exit;
+    }
 
     $nameplateRowsRes = $koneksi->query("SELECT nomor FROM nameplate_nomor_barcode WHERE batch_id=$batchIdNameplatePrint ORDER BY id ASC");
     $nameplateNumbersToPrint = [];
@@ -2876,10 +2902,9 @@ if ($menu === 'record') {
     <div class="studio-header-top">
       <a href="userview.php?menu=pcb" class="studio-brand">
         <div class="studio-brand-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="4" y1="5" x2="4" y2="19"></line><line x1="7" y1="5" x2="7" y2="19"></line><line x1="9" y1="5" x2="9" y2="19"></line><line x1="13" y1="5" x2="13" y2="19"></line><line x1="15" y1="5" x2="15" y2="19"></line><line x1="17" y1="5" x2="17" y2="19"></line><line x1="20" y1="5" x2="20" y2="19"></line></svg>
-          <span style="margin-left: 2px;">PCB</span>
+          <img src="IMG/Print%20Barcode%20Studio.svg" alt="Print Barcode Studio" class="studio-brand-icon-img">
         </div>
-        <span class="studio-brand-title">PCB Barcode Print <span class="studio-brand-version">v2.4</span></span>
+        <span class="studio-brand-version">v2.4</span>
       </a>
 
       <!-- Header Right: Printer status & Theme Toggle -->
@@ -2906,14 +2931,14 @@ if ($menu === 'record') {
       <a class="studio-nav-tab studio-logout-tab" href="Logout1.php">Logout</a>
     </div>
 
-    <!-- Row 3: Subbar for Light Mode (Reference Image 2) -->
-    <div class="studio-subbar" style="display: none;">
+    <!-- Row 3: Printer & Mode Subbar -->
+    <div class="studio-subbar">
       <div class="studio-subbar-left">
         <div id="headerPrinterSubDot" class="studio-printer-dot"></div>
         <span id="headerPrinterSubText">● Printer: Zebra ZD420 | Status: Connected | Port: USB001</span>
       </div>
       <div>
-        <span style="color: #64748b; font-size: 12px; font-weight: 500;">Operator Mode</span>
+        <span class="studio-subbar-mode">Operator Mode</span>
       </div>
     </div>
   </header>
@@ -2978,7 +3003,7 @@ if ($menu === 'record') {
                               $pCnt = (int) ($statRow['printed_cnt'] ?? 0);
                               $uCnt = (int) ($statRow['unprinted_cnt'] ?? 0);
                               if ($tCnt > 0 && $uCnt === 0) {
-                                  $label .= ' (Selesai)';
+                                  $label .= ' (Selesai - Sudah Di-Record)';
                               } elseif ($pCnt > 0) {
                                   $label .= " (Sisa {$uCnt}/{$tCnt})";
                               } else {
@@ -2988,7 +3013,7 @@ if ($menu === 'record') {
                               $checkBatchPrint = $koneksi->query("SELECT COUNT(*) as cnt FROM {$pcbPrintLogTable} WHERE batch_id=$id");
                               $batchPrintRow = $checkBatchPrint ? $checkBatchPrint->fetch_assoc() : null;
                               if ($batchPrintRow && $batchPrintRow['cnt'] > 0) {
-                                  $label .= ' (Sudah Print)';
+                                  $label .= ' (Sudah Di-Record)';
                               }
                           }
                           echo "<option value='{$id}' {$sel}>{$label}</option>";
@@ -3021,7 +3046,11 @@ if ($menu === 'record') {
               <div class="studio-preview-header">
                 <div class="studio-preview-title">PREVIEW BARCODE</div>
                 <div class="studio-preview-total" id="studioPreviewTotalText">
-                  Total: <?= $totalDisplayLabels > 0 ? $totalDisplayLabels : 999 ?> Labels (Ready)
+                  <?php if (!empty($isPrinted)): ?>
+                    <span style="color: #f87171; font-weight: 700;">&#128274; Sudah Di-Record (Hanya Admin)</span>
+                  <?php else: ?>
+                    Total: <?= $totalDisplayLabels > 0 ? $totalDisplayLabels : 999 ?> Labels (Ready)
+                  <?php endif; ?>
                 </div>
               </div>
 
@@ -3073,8 +3102,26 @@ if ($menu === 'record') {
                 <?php endif; ?>
               </div>
 
+              <?php if (!empty($isPrinted)): ?>
+                <div class="warning-msg" style="margin-top: 12px; padding: 12px 14px; border-radius: 8px; background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.45); color: #f87171; font-size: 13px; font-weight: 600;">
+                  &#128274; <?= $isEvChargerMenu
+                    ? 'Batch EV Charger ini sudah selesai di-print &amp; di-record ke database seluruhnya. User biasa tidak dapat mencetak ulang (hanya Admin).'
+                    : 'Batch ini sudah di-record ke database dan tidak dapat di-print ulang oleh user biasa. Hanya Admin yang dapat mencetak ulang.' ?>
+                </div>
+                <div class="studio-preview-actions">
+                  <button type="button" id="btnStudioPrintNow" class="studio-btn-execute" disabled style="opacity: 0.45; cursor: not-allowed; filter: grayscale(0.6);" title="Sudah di-record ke database — Hanya Admin yang bisa cetak ulang">
+                    &#128274; SUDAH DI-RECORD (TERKUNCI)
+                  </button>
+                  <button type="button" id="btnStudioCancel" class="studio-btn-action">
+                    Batal
+                  </button>
+                  <button type="button" id="btnStudioPrinterSettings" class="studio-btn-action">
+                    Pengaturan Printer [F12]
+                  </button>
+                </div>
+              <?php else: ?>
               <!-- Form Print & Custom Text Section -->
-              <form id="printForm" method="POST" data-is-printed="<?= !empty($isPrinted) ? '1' : '0' ?>" data-is-ev="<?= $isEvChargerMenu ? '1' : '0' ?>" style="margin-top: 12px;">
+              <form id="printForm" method="POST" data-is-printed="0" data-is-ev="<?= $isEvChargerMenu ? '1' : '0' ?>" style="margin-top: 12px;">
                 <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
                 <input type="hidden" name="batch_id" value="<?= (int)($selectedBatchId ?? 0) ?>">
                 <input type="hidden" name="wo" value="<?= htmlspecialchars($woBatch ?? '') ?>">
@@ -3087,6 +3134,11 @@ if ($menu === 'record') {
                   <!-- Custom Range for EV Charger -->
                   <div style="margin-bottom: 12px; padding: 10px 14px; border-radius: 6px; background: var(--studio-inner-bg); border: 1px solid var(--studio-inner-border);">
                     <label style="font-weight: 600; font-size: 12.5px; margin-bottom: 6px; display: block; color: var(--studio-text);">Custom Range Print EV Charger</label>
+                    <?php if (!empty($printedCount) && $printedCount > 0): ?>
+                      <div style="margin-bottom: 8px; padding: 6px 10px; border-radius: 5px; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; font-size: 11.5px;">
+                        &#9888;&#65039; <strong><?= (int) $printedCount ?></strong> nomor sudah di-record (terkunci untuk user biasa). Sisa tersedia: <strong><?= (int) $unprintedCount ?></strong> nomor (<?= htmlspecialchars($defaultEvStart ?? '') ?> s/d <?= htmlspecialchars($defaultEvEnd ?? '') ?>).
+                      </div>
+                    <?php endif; ?>
                     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px;">
                       <div>
                         <label class="studio-label" style="font-size: 11px;">Nomor Awal Print</label>
@@ -3098,7 +3150,7 @@ if ($menu === 'record') {
                       </div>
                       <div>
                         <label class="studio-label" style="font-size: 11px;">Quantity</label>
-                        <input type="number" name="ev_print_qty" id="evPrintQty" class="studio-input" min="1" max="<?= max(1, $totalBatchCount ?? 1) ?>" value="<?= $defaultEvQty ?? 1 ?>" required>
+                        <input type="number" name="ev_print_qty" id="evPrintQty" class="studio-input" min="1" max="<?= max(1, $unprintedCount ?? 1) ?>" value="<?= $defaultEvQty ?? 1 ?>" required>
                       </div>
                     </div>
                     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; margin-top: 8px;">
@@ -3109,7 +3161,9 @@ if ($menu === 'record') {
                         <?php if (!empty($unprintedCount) && $unprintedCount > 0): ?>
                           <button type="button" id="btnEvQuickAll" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">Cetak Sisa (<?= $unprintedCount ?>)</button>
                         <?php endif; ?>
-                        <button type="button" id="btnEvQuickFullBatch" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">Semua (<?= $totalBatchCount ?? 0 ?>)</button>
+                        <?php if (empty($printedCount)): ?>
+                          <button type="button" id="btnEvQuickFullBatch" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">Semua (<?= $totalBatchCount ?? 0 ?>)</button>
+                        <?php endif; ?>
                         <button type="button" id="btnEvQuick12" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">12 Pcs</button>
                         <button type="button" id="btnEvQuick9" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">1 Lembar (9)</button>
                         <button type="button" id="btnEvQuick18" class="studio-btn" style="height: 26px; padding: 0 8px; font-size: 11px;">2 Lembar (18)</button>
@@ -3161,6 +3215,7 @@ if ($menu === 'record') {
                 <!-- Hidden trigger button for JS -->
                 <button type="button" id="printBtn" style="display: none;">Print</button>
               </form>
+              <?php endif; ?>
             </div>
           </div>
         </div>
@@ -3262,6 +3317,10 @@ if ($menu === 'record') {
             function triggerPrintFlow(e) {
               if (e && e.preventDefault) e.preventDefault();
               if (!printForm) return;
+              if (printForm.dataset.isPrinted === "1") {
+                alert("Batch ini sudah di-record ke database dan tidak dapat di-print ulang oleh user biasa. Hanya Admin yang dapat mencetak ulang.");
+                return;
+              }
               var batchId = printForm.querySelector("input[name='batch_id']").value;
               if (!batchId || batchId === "0") {
                 alert("Silakan pilih Work Order dan Batch terlebih dahulu sebelum mencetak.");
@@ -3420,7 +3479,7 @@ if ($menu === 'record') {
               </div>
 
               <?php if ($isNameplateRecorded): ?>
-                <div class="warning-msg">Batch nameplate ini sudah di-record dan tidak bisa di-record ulang.</div>
+                <div class="warning-msg">Batch nameplate ini sudah di-record ke database dan tidak dapat di-print ulang oleh user biasa. Hanya Admin yang dapat mencetak ulang.</div>
               <?php else: ?>
 	                <form id="nameplatePrintForm" method="POST" style="margin-top:14px;">
 	                  <input type="hidden" name="menu" value="<?= htmlspecialchars($menu) ?>">
@@ -3581,7 +3640,7 @@ if ($menu === 'record') {
               </div>
               <div style="display: flex; flex-direction: column;">
                 <label for="customCopyCount" style="display:block; margin-bottom:8px; font-weight:500;">Jumlah Copy</label>
-                <input type="number" id="customCopyCount" name="copy_count" value="1" min="1" oninput="updateCopyCountConstraint()" style="width:100%; border:1px solid var(--line-strong); border-radius:6px; padding:8px 12px; background:var(--card); font-size:1.1rem; box-sizing:border-box; height: 42px; font-weight: bold; text-align: center;">
+                <input type="number" id="customCopyCount" name="copy_count" value="1" min="1" oninput="updateCopyCountConstraint()" style="width:100%; border:1px solid var(--line-strong); border-radius:6px; padding:8px 12px; background:var(--content-panel-soft); color:var(--content-text); font-size:1.1rem; box-sizing:border-box; height: 42px; font-weight: bold; text-align: center;">
                 <span id="customCopyHelp" style="display:block; font-size:11px; color:var(--content-muted); margin-top:6px; line-height:1.3;"></span>
               </div>
             </div>
@@ -4119,40 +4178,11 @@ if ($menu === 'record') {
         })();
       </script>
       <script>
-        (function () {
-          var btn = document.getElementById("themeToggleBtn");
-          if (!btn) {
-            return;
+        try {
+          if (window.localStorage && window.localStorage.getItem("uiThemeMode") === "light") {
+            document.body.classList.add("light-theme");
           }
-          var storageKey = "uiThemeMode";
-          function applyTheme(theme) {
-            var isLight = theme === "light";
-            document.body.classList.toggle("light-theme", isLight);
-            btn.innerHTML = isLight ? "&#127769; Dark Mode" : "&#9728;&#65039; Light Mode";
-            btn.setAttribute("aria-pressed", isLight ? "true" : "false");
-          }
-          var currentTheme = "dark";
-          try {
-            if (window.localStorage) {
-              var saved = window.localStorage.getItem(storageKey);
-              if (saved === "light" || saved === "dark") {
-                currentTheme = saved;
-              }
-            }
-          } catch (err) {
-          }
-          applyTheme(currentTheme);
-          btn.addEventListener("click", function () {
-            currentTheme = currentTheme === "light" ? "dark" : "light";
-            applyTheme(currentTheme);
-            try {
-              if (window.localStorage) {
-                window.localStorage.setItem(storageKey, currentTheme);
-              }
-            } catch (err) {
-            }
-          });
-        })();
+        } catch (err) {}
       </script>
     </main>
   </div>
@@ -4268,9 +4298,17 @@ if ($menu === 'record') {
           .page table tr:first-child .label {
             transform: translateY(1.9mm);
           }
+          .page table tr td.label:nth-child(2),
+          .page table tr td.label:nth-child(3) {
+            transform: translate(-0.2mm, 1.2mm);
+          }
+          .page table tr:first-child td.label:nth-child(2),
+          .page table tr:first-child td.label:nth-child(3) {
+            transform: translate(-0.2mm, 1.9mm);
+          }
           .label svg {
             width: 23.27mm;
-            height: 6.76mm;
+            height: 6.96mm;
             margin-bottom: 0px;
             shape-rendering: crispEdges;
             overflow: visible;
@@ -4278,7 +4316,7 @@ if ($menu === 'record') {
           .pcb-code-text {
             width: 100%;
             height: 9px;
-            margin-top: -3.4px;
+            margin-top: calc(-3.4px - 0.2mm);
             font-family: Calibri, Arial, sans-serif;
             font-size: 5.6pt;
             font-weight: 400;
@@ -4331,6 +4369,10 @@ if ($menu === 'record') {
           }
           .page table tr:first-child .label.no-barcode {
             transform: none !important;
+          }
+          .page table tr td.label.no-barcode:nth-child(2),
+          .page table tr td.label.no-barcode:nth-child(3) {
+            transform: translateX(-0.2mm) !important;
           }
           .label.no-barcode .pcb-code-text {
             height: 14px;
@@ -5220,7 +5262,7 @@ if ($menu === 'record') {
           chunk.forEach(function(item, idx) {
             if (generateBarcode && item.main) {
               var id = "code_" + pageIndex + "_" + idx;
-              w.document.write('JsBarcode("#' + id + '", "' + escapeJs(item.main) + '", {format:"CODE128", displayValue:false, fontSize:11, height:52, width:3});');
+              w.document.write('JsBarcode("#' + id + '", "' + escapeJs(item.main) + '", {format:"CODE128", displayValue:false, fontSize:11, height:54.5, width:3});');
             }
           });
         });

@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Drawing;
 using System.Drawing.Printing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using Microsoft.Win32;
 using Windows.Data.Pdf;
 using Windows.Foundation;
@@ -48,6 +49,34 @@ namespace PCBBarcodePrint
 
         [DllImport("kernel32.dll")]
         static extern bool Beep(uint dwFreq, uint dwDuration);
+
+        [DllImport("gdi32.dll")]
+        static extern int GetDeviceCaps(IntPtr hdc, int nIndex);
+
+        [DllImport("gdi32.dll")]
+        static extern int SetStretchBltMode(IntPtr hdc, int mode);
+
+        [DllImport("gdi32.dll")]
+        static extern int StretchDIBits(
+            IntPtr hdc,
+            int xDest,
+            int yDest,
+            int DestWidth,
+            int DestHeight,
+            int xSrc,
+            int ySrc,
+            int SrcWidth,
+            int SrcHeight,
+            byte[] lpBits,
+            byte[] lpbmi,
+            uint iUsage,
+            uint rop);
+
+        const int LOGPIXELSX = 88;
+        const int LOGPIXELSY = 90;
+        const int COLORONCOLOR = 3;
+        const uint DIB_RGB_COLORS = 0;
+        const uint SRCCOPY = 0x00CC0020;
 
         const uint CM_LOCATE_DEVNODE_NORMAL = 0x00000000;
         const int CR_SUCCESS = 0;
@@ -162,9 +191,8 @@ namespace PCBBarcodePrint
         }
         #endregion
 
-        private class RenderedPage
+        private class PageMeta
         {
-            public Bitmap Image;
             public double WidthDip;
             public double HeightDip;
             public int Width100;
@@ -784,9 +812,9 @@ namespace PCBBarcodePrint
             return true;
         }
 
-        private static List<RenderedPage> RenderPdfPages(string pdfPath, double dpi)
+        private static PdfDocument LoadPdfDocument(string pdfPath, out List<PageMeta> metas)
         {
-            List<RenderedPage> list = new List<RenderedPage>();
+            metas = new List<PageMeta>();
             StorageFile file = WaitAsync(StorageFile.GetFileFromPathAsync(Path.GetFullPath(pdfPath)));
             PdfDocument pdfDoc = WaitAsync(PdfDocument.LoadFromFileAsync(file));
 
@@ -797,42 +825,138 @@ namespace PCBBarcodePrint
                 {
                     double wDip = page.Size.Width;
                     double hDip = page.Size.Height;
-
-                    uint pxW = (uint)Math.Max(1, Math.Round(wDip * dpi / 96.0));
-                    uint pxH = (uint)Math.Max(1, Math.Round(hDip * dpi / 96.0));
-
-                    PdfPageRenderOptions opts = new PdfPageRenderOptions();
-                    opts.DestinationWidth = pxW;
-                    opts.DestinationHeight = pxH;
-
-                    using (InMemoryRandomAccessStream stream = new InMemoryRandomAccessStream())
+                    metas.Add(new PageMeta
                     {
-                        WaitAction(page.RenderToStreamAsync(stream, opts));
-                        stream.Seek(0);
-                        uint size = (uint)stream.Size;
-                        byte[] bytes = new byte[size];
-                        using (DataReader reader = new DataReader(stream))
-                        {
-                            WaitAsync(reader.LoadAsync(size));
-                            reader.ReadBytes(bytes);
-                        }
+                        WidthDip = wDip,
+                        HeightDip = hDip,
+                        Width100 = (int)Math.Max(10, Math.Round(wDip * 100.0 / 96.0)),
+                        Height100 = (int)Math.Max(10, Math.Round(hDip * 100.0 / 96.0))
+                    });
+                }
+            }
+            return pdfDoc;
+        }
 
-                        using (MemoryStream ms = new MemoryStream(bytes))
+        private static Bitmap RenderPdfPageBitmap(PdfPage page, int pxW, int pxH)
+        {
+            PdfPageRenderOptions opts = new PdfPageRenderOptions();
+            opts.DestinationWidth = (uint)Math.Max(1, pxW);
+            opts.DestinationHeight = (uint)Math.Max(1, pxH);
+
+            using (InMemoryRandomAccessStream stream = new InMemoryRandomAccessStream())
+            {
+                WaitAction(page.RenderToStreamAsync(stream, opts));
+                stream.Seek(0);
+                uint size = (uint)stream.Size;
+                byte[] bytes = new byte[size];
+                using (DataReader reader = new DataReader(stream))
+                {
+                    WaitAsync(reader.LoadAsync(size));
+                    reader.ReadBytes(bytes);
+                }
+
+                using (MemoryStream ms = new MemoryStream(bytes))
+                {
+                    return new Bitmap(ms);
+                }
+            }
+        }
+
+        private static byte[] ConvertBitmapTo1bppDib(Bitmap src, int threshold, bool bottomUp, out int stride)
+        {
+            int w = src.Width;
+            int h = src.Height;
+            stride = ((w + 31) / 32) * 4;
+            byte[] dib = new byte[stride * h];
+
+            BitmapData srcData = src.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int srcStride = Math.Abs(srcData.Stride);
+                byte[] sBytes = new byte[srcStride * h];
+                Marshal.Copy(srcData.Scan0, sBytes, 0, sBytes.Length);
+
+                for (int y = 0; y < h; y++)
+                {
+                    int sRow = y * srcStride;
+                    int dRow = (bottomUp ? (h - 1 - y) : y) * stride;
+                    for (int x = 0; x < w; x++)
+                    {
+                        int idx = sRow + (x * 4);
+                        byte b = sBytes[idx];
+                        byte g = sBytes[idx + 1];
+                        byte r = sBytes[idx + 2];
+                        byte a = sBytes[idx + 3];
+                        if (a < 255)
                         {
-                            Bitmap bmp = new Bitmap(ms);
-                            list.Add(new RenderedPage
-                            {
-                                Image = bmp,
-                                WidthDip = wDip,
-                                HeightDip = hDip,
-                                Width100 = (int)Math.Max(10, Math.Round(wDip * 100.0 / 96.0)),
-                                Height100 = (int)Math.Max(10, Math.Round(hDip * 100.0 / 96.0))
-                            });
+                            int inv = 255 - a;
+                            r = (byte)((r * a + 255 * inv) / 255);
+                            g = (byte)((g * a + 255 * inv) / 255);
+                            b = (byte)((b * a + 255 * inv) / 255);
+                        }
+                        int lum = (r * 299 + g * 587 + b * 114) / 1000;
+                        if (lum >= threshold)
+                        {
+                            dib[dRow + (x >> 3)] |= (byte)(0x80 >> (x & 7));
                         }
                     }
                 }
             }
-            return list;
+            finally
+            {
+                src.UnlockBits(srcData);
+            }
+            return dib;
+        }
+
+        private static byte[] Build1bppBitmapInfo(int w, int h, int stride)
+        {
+            byte[] bmi = new byte[48];
+            BitConverter.GetBytes(40).CopyTo(bmi, 0);        // biSize
+            BitConverter.GetBytes(w).CopyTo(bmi, 4);         // biWidth
+            BitConverter.GetBytes(h).CopyTo(bmi, 8);         // biHeight (>0 = standard bottom-up DIB)
+            BitConverter.GetBytes((short)1).CopyTo(bmi, 12); // biPlanes
+            BitConverter.GetBytes((short)1).CopyTo(bmi, 14); // biBitCount = 1bpp monochrome
+            BitConverter.GetBytes(0).CopyTo(bmi, 16);        // biCompression = BI_RGB
+            BitConverter.GetBytes(stride * h).CopyTo(bmi, 20); // biSizeImage
+            BitConverter.GetBytes(2).CopyTo(bmi, 32);        // biClrUsed = 2
+            BitConverter.GetBytes(2).CopyTo(bmi, 36);        // biClrImportant = 2
+            // Palette[0] = Pure Black (0,0,0), Palette[1] = Pure White (255,255,255)
+            bmi[40] = 0; bmi[41] = 0; bmi[42] = 0; bmi[43] = 0;
+            bmi[44] = 255; bmi[45] = 255; bmi[46] = 255; bmi[47] = 0;
+            return bmi;
+        }
+
+        private static Bitmap Create1bppBitmap(Bitmap src, int threshold, float dpiX, float dpiY)
+        {
+            int w = src.Width;
+            int h = src.Height;
+            int dibStride;
+            byte[] topDownBits = ConvertBitmapTo1bppDib(src, threshold, false, out dibStride);
+
+            Bitmap dst = new Bitmap(w, h, PixelFormat.Format1bppIndexed);
+            dst.SetResolution(dpiX, dpiY);
+            ColorPalette pal = dst.Palette;
+            pal.Entries[0] = Color.FromArgb(255, 0, 0, 0);
+            pal.Entries[1] = Color.FromArgb(255, 255, 255, 255);
+            dst.Palette = pal;
+
+            BitmapData dstData = dst.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format1bppIndexed);
+            try
+            {
+                int dstStride = Math.Abs(dstData.Stride);
+                int copyBytes = Math.Min(dibStride, dstStride);
+                for (int y = 0; y < h; y++)
+                {
+                    IntPtr dstRow = new IntPtr(dstData.Scan0.ToInt64() + (y * dstStride));
+                    Marshal.Copy(topDownBits, y * dibStride, dstRow, copyBytes);
+                }
+            }
+            finally
+            {
+                dst.UnlockBits(dstData);
+            }
+            return dst;
         }
 
         [MTAThread]
@@ -948,7 +1072,8 @@ namespace PCBBarcodePrint
                     }
                 }
 
-                List<RenderedPage> pages = RenderPdfPages(pdfPath, dpi);
+                List<PageMeta> pages;
+                PdfDocument pdfDoc = LoadPdfDocument(pdfPath, out pages);
                 if (pages.Count == 0)
                 {
                     Console.WriteLine("{\"success\":false,\"error\":\"Tidak ada halaman untuk dicetak.\"}");
@@ -964,7 +1089,6 @@ namespace PCBBarcodePrint
                         pages[0].Height100,
                         EscapeJson(printerName)
                     ));
-                    foreach (var p in pages) { if (p.Image != null) p.Image.Dispose(); }
                     return 0;
                 }
 
@@ -972,7 +1096,6 @@ namespace PCBBarcodePrint
                 SafetyEvaluation midCheck = EvaluateAndEnforceSafety(printerName, true);
                 if (midCheck.Triggered)
                 {
-                    foreach (var p in pages) { if (p.Image != null) p.Image.Dispose(); }
                     Console.WriteLine(FormatSafetyJson(printerName, midCheck));
                     return 0;
                 }
@@ -985,7 +1108,6 @@ namespace PCBBarcodePrint
                     printDoc.PrinterSettings.Copies = 1;
                     if (!printDoc.PrinterSettings.IsValid)
                     {
-                        foreach (var p in pages) { if (p.Image != null) p.Image.Dispose(); }
                         Console.WriteLine("{\"success\":false,\"error\":\"Printer tidak ditemukan atau tidak valid: " + EscapeJson(printerName) + "\"}");
                         return 1;
                     }
@@ -998,14 +1120,14 @@ namespace PCBBarcodePrint
 
                     printDoc.QueryPageSettings += (sender, e) =>
                     {
-                        RenderedPage rp = pages[Math.Min(pageIdx, pages.Count - 1)];
+                        PageMeta pm = pages[Math.Min(pageIdx, pages.Count - 1)];
                         e.PageSettings.Margins = new Margins(0, 0, 0, 0);
                         e.PageSettings.Landscape = false;
 
                         PaperSize matchedPaper = null;
                         foreach (PaperSize ps in printDoc.PrinterSettings.PaperSizes)
                         {
-                            if (Math.Abs(ps.Width - rp.Width100) <= 12 && Math.Abs(ps.Height - rp.Height100) <= 12)
+                            if (Math.Abs(ps.Width - pm.Width100) <= 12 && Math.Abs(ps.Height - pm.Height100) <= 12)
                             {
                                 matchedPaper = ps;
                                 break;
@@ -1018,7 +1140,7 @@ namespace PCBBarcodePrint
                         }
                         else
                         {
-                            e.PageSettings.PaperSize = new PaperSize("CustomLabel", rp.Width100, rp.Height100);
+                            e.PageSettings.PaperSize = new PaperSize("CustomLabel", pm.Width100, pm.Height100);
                         }
                     };
 
@@ -1034,28 +1156,89 @@ namespace PCBBarcodePrint
                             return;
                         }
 
-                        RenderedPage rp = pages[pageIdx];
-                        e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
-                        e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-                        e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
+                        PageMeta pm = pages[pageIdx];
+                        float gx = e.Graphics.DpiX;
+                        float gy = e.Graphics.DpiY;
+                        float hmX = e.PageSettings.HardMarginX;
+                        float hmY = e.PageSettings.HardMarginY;
 
-                        float targetW = (float)(rp.WidthDip * 100.0 / 96.0);
-                        float targetH = (float)(rp.HeightDip * 100.0 / 96.0);
-                        float offsetX = -e.PageSettings.HardMarginX;
-                        float offsetY = -e.PageSettings.HardMarginY;
+                        double devDpiX = (gx >= 72f && gx <= 4800f) ? gx : dpi;
+                        double devDpiY = (gy >= 72f && gy <= 4800f) ? gy : dpi;
 
-                        e.Graphics.DrawImage(rp.Image, new RectangleF(offsetX, offsetY, targetW, targetH));
+                        IntPtr probeHdc = e.Graphics.GetHdc();
+                        try
+                        {
+                            int dcX = GetDeviceCaps(probeHdc, LOGPIXELSX);
+                            int dcY = GetDeviceCaps(probeHdc, LOGPIXELSY);
+                            if ((gx < 72f || gx > 4800f) && dcX >= 72 && dcX <= 4800) devDpiX = dcX;
+                            if ((gy < 72f || gy > 4800f) && dcY >= 72 && dcY <= 4800) devDpiY = dcY;
+                        }
+                        finally
+                        {
+                            e.Graphics.ReleaseHdc(probeHdc);
+                        }
+
+                        int scaleDown = 1;
+                        while ((devDpiX / scaleDown) > 1200.0 || (devDpiY / scaleDown) > 1200.0)
+                        {
+                            scaleDown++;
+                        }
+
+                        int devW = Math.Max(1, (int)Math.Round(pm.WidthDip * devDpiX / 96.0));
+                        int devH = Math.Max(1, (int)Math.Round(pm.HeightDip * devDpiY / 96.0));
+                        int srcW = (scaleDown == 1) ? devW : Math.Max(1, (int)Math.Round(pm.WidthDip * (devDpiX / scaleDown) / 96.0));
+                        int srcH = (scaleDown == 1) ? devH : Math.Max(1, (int)Math.Round(pm.HeightDip * (devDpiY / scaleDown) / 96.0));
+
+                        int offX = -(int)Math.Round(hmX * devDpiX / 100.0);
+                        int offY = -(int)Math.Round(hmY * devDpiY / 100.0);
+
+                        double effectiveDpi = Math.Min(devDpiX / scaleDown, devDpiY / scaleDown);
+                        int threshold = (effectiveDpi <= 240.0) ? 118 : 128;
+
+                        using (PdfPage pdfPage = pdfDoc.GetPage((uint)pageIdx))
+                        using (Bitmap srcBmp = RenderPdfPageBitmap(pdfPage, srcW, srcH))
+                        {
+                            int dibStride;
+                            byte[] dibBits = ConvertBitmapTo1bppDib(srcBmp, threshold, true, out dibStride);
+                            byte[] bmi = Build1bppBitmapInfo(srcW, srcH, dibStride);
+
+                            bool stretched = false;
+                            IntPtr printHdc = e.Graphics.GetHdc();
+                            try
+                            {
+                                SetStretchBltMode(printHdc, COLORONCOLOR);
+                                int drawnLines = StretchDIBits(
+                                    printHdc,
+                                    offX, offY, devW, devH,
+                                    0, 0, srcW, srcH,
+                                    dibBits, bmi, DIB_RGB_COLORS, SRCCOPY
+                                );
+                                stretched = (drawnLines > 0);
+                            }
+                            finally
+                            {
+                                e.Graphics.ReleaseHdc(printHdc);
+                            }
+
+                            if (!stretched)
+                            {
+                                using (Bitmap monoBmp = Create1bppBitmap(srcBmp, threshold, (float)(devDpiX / scaleDown), (float)(devDpiY / scaleDown)))
+                                {
+                                    e.Graphics.InterpolationMode = InterpolationMode.NearestNeighbor;
+                                    e.Graphics.PixelOffsetMode = PixelOffsetMode.Half;
+                                    e.Graphics.SmoothingMode = SmoothingMode.None;
+                                    float targetW = (float)(pm.WidthDip * 100.0 / 96.0);
+                                    float targetH = (float)(pm.HeightDip * 100.0 / 96.0);
+                                    e.Graphics.DrawImage(monoBmp, new RectangleF(-hmX, -hmY, targetW, targetH));
+                                }
+                            }
+                        }
 
                         pageIdx++;
                         e.HasMorePages = (pageIdx < pages.Count);
                     };
 
                     printDoc.Print();
-                }
-
-                foreach (var p in pages)
-                {
-                    if (p.Image != null) p.Image.Dispose();
                 }
 
                 if (midPrintAbort != null && midPrintAbort.Triggered)

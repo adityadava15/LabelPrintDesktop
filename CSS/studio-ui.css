@@ -7,12 +7,16 @@
    1. COLOR PALETTES & THEME VARIABLES
    ========================================================================== */
 :root {
-  /* Dark Mode (Default / Reference Image 1) */
+  /* Dark Mode (Unified UI layout matching Light Mode, dark color palette) */
   --studio-bg: #0c1424;
-  --studio-header-bg: #0d1527;
+  --studio-header-bg: #09101d;
   --studio-header-border: #1a2740;
-  --studio-tab-bar-bg: #111a2e;
-  --studio-tab-bar-border: #18243c;
+  --studio-tab-bar-bg: transparent;
+  --studio-tab-bar-border: transparent;
+  --studio-subbar-bg: #141f36;
+  --studio-subbar-border: #223352;
+  --studio-subbar-text: #e2e8f0;
+  --studio-subbar-muted: #94a3b8;
   --studio-card-bg: #141f36;
   --studio-card-border: #1f2f4e;
   --studio-inner-bg: #0d1527;
@@ -35,9 +39,10 @@
   --studio-primary-text: #ffffff;
   
   --studio-accent-cyan: #38bdf8;
-  --studio-tab-text: #8c9cb3;
-  --studio-tab-active-text: #38bdf8;
-  --studio-tab-active-border: #38bdf8;
+  --studio-tab-text: #cbd5e1;
+  --studio-tab-active-bg: #1b2b47;
+  --studio-tab-active-text: #ffffff;
+  --studio-tab-active-border: transparent;
 }
 
 body.light-theme {
@@ -45,10 +50,12 @@ body.light-theme {
   --studio-bg: #cbd5e1;
   --studio-header-bg: #133758;
   --studio-header-border: #0f2a48;
-  --studio-tab-bar-bg: #133758;
-  --studio-tab-bar-border: #0f2a48;
+  --studio-tab-bar-bg: transparent;
+  --studio-tab-bar-border: transparent;
   --studio-subbar-bg: #f1f5f9;
   --studio-subbar-border: #cbd5e1;
+  --studio-subbar-text: #334155;
+  --studio-subbar-muted: #64748b;
   
   --studio-card-bg: #ffffff;
   --studio-card-border: #cbd5e1;
@@ -72,7 +79,8 @@ body.light-theme {
   --studio-primary-text: #ffffff;
   
   --studio-accent-cyan: #0088cc;
-  --studio-tab-text: #d1d5db;
+  --studio-tab-text: #e2e8f0;
+  --studio-tab-active-bg: #ffffff;
   --studio-tab-active-text: #133758;
   --studio-tab-active-border: transparent;
 }
@@ -117,27 +125,27 @@ html, body {
    ========================================================================== */
 .studio-header {
   background: var(--studio-header-bg);
-  border-bottom: 1px solid var(--studio-header-border);
+  border-bottom: none;
   width: 100%;
   position: sticky;
   top: 0;
   z-index: 999;
 }
 
-/* Row 1: Brand & Printer status */
+/* Row 1: Brand & Theme toggle */
 .studio-header-top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 24px;
-  height: 48px;
+  padding: 6px 24px 0;
+  height: 46px;
   box-sizing: border-box;
 }
 
 .studio-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   text-decoration: none;
   color: #ffffff;
 }
@@ -146,33 +154,31 @@ html, body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 96px;
+  height: 32px;
   background: #ffffff;
-  color: #0f172a;
-  border-radius: 4px;
-  padding: 3px 6px;
-  font-size: 10px;
-  font-weight: 900;
-  letter-spacing: 0.5px;
+  border-radius: 5px;
+  padding: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
 }
 
-.studio-brand-icon svg {
-  width: 20px;
-  height: 20px;
-  stroke: #0f172a;
-}
-
-.studio-brand-title {
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
-  color: #ffffff;
+.studio-brand-icon-img,
+.studio-brand-icon img {
+  width: 122px;
+  height: 94.27px;
+  max-width: none;
+  max-height: none;
+  display: block;
+  flex-shrink: 0;
 }
 
 .studio-brand-version {
-  font-size: 11.5px;
-  color: var(--studio-text-muted);
-  font-weight: 500;
-  vertical-align: super;
+  font-size: 12px;
+  color: #94a3b8;
+  font-weight: 600;
+  line-height: 1;
 }
 
 /* Header Right info & toggle */
@@ -183,7 +189,7 @@ html, body {
 }
 
 .studio-printer-status-bar {
-  display: flex;
+  display: none;
   align-items: center;
   gap: 8px;
   font-size: 13px;
@@ -233,16 +239,16 @@ html, body {
   background: rgba(255, 255, 255, 0.16);
 }
 
-/* Row 2: Horizontal Navigation Tabs Bar */
+/* Row 2: Horizontal Folder Tabs Bar (Identical UI in Dark & Light Modes) */
 .studio-nav-bar {
   display: flex !important;
   flex-direction: row !important;
   align-items: center !important;
-  background: var(--studio-tab-bar-bg);
-  border-top: 1px solid var(--studio-tab-bar-border);
+  background: var(--studio-tab-bar-bg) !important;
+  border-top: none !important;
   padding: 0 24px !important;
-  height: 40px;
-  gap: 28px !important;
+  height: 36px;
+  gap: 12px !important;
   overflow-x: auto;
   scrollbar-width: none;
   box-sizing: border-box;
@@ -255,16 +261,17 @@ html, body {
 .studio-nav-tab {
   display: inline-flex !important;
   align-items: center !important;
-  padding: 0 4px !important;
-  height: 40px !important;
-  font-size: 13.5px !important;
+  padding: 0 14px !important;
+  height: 36px !important;
+  font-size: 13px !important;
   font-weight: 500 !important;
   color: var(--studio-tab-text) !important;
   text-decoration: none !important;
   white-space: nowrap !important;
   position: relative;
   transition: all 0.15s ease;
-  border-bottom: 2px solid transparent !important;
+  border-radius: 6px 6px 0 0 !important;
+  border-bottom: none !important;
   box-sizing: border-box;
 }
 
@@ -272,57 +279,21 @@ html, body {
   color: #ffffff !important;
 }
 
-/* Dark Mode Active Tab (Underline Cyan) */
 .studio-nav-tab.active {
+  background: var(--studio-tab-active-bg) !important;
   color: var(--studio-tab-active-text) !important;
-  font-weight: 600 !important;
-  border-bottom: 2px solid var(--studio-tab-active-border) !important;
+  font-weight: 700 !important;
 }
 
 .studio-logout-tab {
   margin-left: auto;
-  color: #ef4444 !important;
 }
 
-/* Light Mode Overrides (Image 2) */
-body.light-theme .studio-header {
-  background: var(--studio-header-bg);
-  border-bottom: none;
+body.light-theme .studio-brand-version {
+  color: #cbd5e1;
 }
 
-body.light-theme .studio-header-top {
-  padding-bottom: 0;
-  height: 46px;
-}
-
-body.light-theme .studio-nav-bar {
-  background: transparent !important;
-  border-top: none !important;
-  height: 36px;
-  gap: 12px !important;
-  padding-bottom: 0 !important;
-}
-
-body.light-theme .studio-nav-tab {
-  color: #e2e8f0 !important;
-  font-size: 13px !important;
-  padding: 0 14px !important;
-  height: 36px !important;
-  border-radius: 6px 6px 0 0 !important;
-  border-bottom: none !important;
-}
-
-body.light-theme .studio-nav-tab:hover {
-  color: #ffffff !important;
-}
-
-body.light-theme .studio-nav-tab.active {
-  background: #ffffff !important;
-  color: #133758 !important;
-  font-weight: 700 !important;
-}
-
-/* Subbar in Light Mode */
+/* Row 3: Subbar (Shown in both Dark & Light Modes, differs only in colors) */
 .studio-subbar {
   background: var(--studio-subbar-bg);
   border-bottom: 1px solid var(--studio-subbar-border);
@@ -331,15 +302,22 @@ body.light-theme .studio-nav-tab.active {
   align-items: center;
   justify-content: space-between;
   font-size: 12.5px;
-  color: #334155;
+  color: var(--studio-subbar-text);
   height: 34px;
   box-sizing: border-box;
+  cursor: pointer;
 }
 
 .studio-subbar-left {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.studio-subbar-mode {
+  color: var(--studio-subbar-muted);
+  font-size: 12px;
+  font-weight: 500;
 }
 
 /* ==========================================================================
