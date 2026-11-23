@@ -179,8 +179,10 @@ namespace PCBBarcodePrint
 
                 if (!string.IsNullOrEmpty(browserPath) && File.Exists(browserPath))
                 {
+                    EnsureProfileMaximized(profileDir);
+
                     string args = string.Format(
-                        "--app=\"{0}\" --user-data-dir=\"{1}\" --window-size=1366,768 --disable-infobars --no-first-run --no-default-browser-check --new-window --kiosk-printing --no-proxy-server",
+                        "--app=\"{0}\" --user-data-dir=\"{1}\" --start-maximized --disable-infobars --no-first-run --no-default-browser-check --new-window --kiosk-printing --no-proxy-server",
                         url,
                         profileDir
                     );
@@ -189,13 +191,18 @@ namespace PCBBarcodePrint
                     {
                         FileName = browserPath,
                         Arguments = args,
-                        UseShellExecute = false
+                        UseShellExecute = false,
+                        WindowStyle = ProcessWindowStyle.Maximized
                     };
 
                     DateTime launchTime = DateTime.UtcNow;
                     browserProcess = Process.Start(psi);
                     if (browserProcess != null)
                     {
+                        int launchedPid = 0;
+                        try { launchedPid = browserProcess.Id; } catch { }
+                        ThreadPool.QueueUserWorkItem(_ => MaximizeAppWindowAsync(launchedPid));
+
                         // DO NOT assign browserProcess to JobObject to prevent nested Chromium sandbox failures
                         browserProcess.EnableRaisingEvents = true;
                         browserProcess.Exited += (s, e) =>
@@ -366,6 +373,112 @@ namespace PCBBarcodePrint
             }
             catch { }
         }
+
+        #region Window Maximize & Profile Helper
+        private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsWindowVisible(IntPtr hWnd);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder lpString, int nMaxCount);
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+
+        [DllImport("user32.dll")]
+        private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+        [DllImport("user32.dll")]
+        private static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        private static extern bool IsZoomed(IntPtr hWnd);
+
+        private const int SW_MAXIMIZE = 3;
+
+        private static void EnsureProfileMaximized(string profileDir)
+        {
+            try
+            {
+                string prefPath = Path.Combine(profileDir, "Default", "Preferences");
+                if (File.Exists(prefPath))
+                {
+                    string json = File.ReadAllText(prefPath);
+                    if (json.Contains("\"maximized\":false"))
+                    {
+                        json = json.Replace("\"maximized\":false", "\"maximized\":true");
+                        File.WriteAllText(prefPath, json);
+                    }
+                }
+            }
+            catch { }
+        }
+
+        private static void MaximizeAppWindowAsync(int launchedPid)
+        {
+            string portToken = serverPort > 0 ? ("127.0.0.1:" + serverPort) : "127.0.0.1:";
+            for (int attempt = 0; attempt < 25; attempt++)
+            {
+                Thread.Sleep(120);
+                bool foundAndMaximized = false;
+
+                try
+                {
+                    EnumWindows((hWnd, lParam) =>
+                    {
+                        if (!IsWindowVisible(hWnd)) return true;
+
+                        var classSb = new System.Text.StringBuilder(128);
+                        GetClassName(hWnd, classSb, classSb.Capacity);
+                        string cls = classSb.ToString();
+                        if (!cls.StartsWith("Chrome_WidgetWin_", StringComparison.OrdinalIgnoreCase))
+                            return true;
+
+                        var titleSb = new System.Text.StringBuilder(512);
+                        GetWindowText(hWnd, titleSb, titleSb.Capacity);
+                        string title = titleSb.ToString();
+
+                        uint pid = 0;
+                        GetWindowThreadProcessId(hWnd, out pid);
+
+                        bool matchPid = (launchedPid > 0 && pid == (uint)launchedPid);
+                        bool matchTitle = !string.IsNullOrEmpty(title) && (
+                            title.IndexOf("Print Barcode Studio", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            title.IndexOf("PCB Barcode Print", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            title.IndexOf(portToken, StringComparison.OrdinalIgnoreCase) >= 0
+                        );
+
+                        if (matchPid || matchTitle)
+                        {
+                            if (!IsZoomed(hWnd))
+                            {
+                                ShowWindow(hWnd, SW_MAXIMIZE);
+                            }
+                            SetForegroundWindow(hWnd);
+                            if (matchTitle && IsZoomed(hWnd))
+                            {
+                                foundAndMaximized = true;
+                            }
+                        }
+                        return true;
+                    }, IntPtr.Zero);
+                }
+                catch { }
+
+                if (foundAndMaximized)
+                {
+                    break;
+                }
+            }
+        }
+        #endregion
 
         #region Browser Print Policy Configuration
         private static void ConfigurePrintPolicies()

@@ -1975,6 +1975,7 @@ if ($recordType === 'nameplate') {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PCB Barcode Print Generator</title>
+  <link rel="stylesheet" href="loading-swirling.css?v=<?= file_exists(__DIR__ . '/loading-swirling.css') ? filemtime(__DIR__ . '/loading-swirling.css') : time() ?>">
   <link rel="stylesheet" href="CSS/app-print-modal.css?v=<?= file_exists(__DIR__ . '/CSS/app-print-modal.css') ? filemtime(__DIR__ . '/CSS/app-print-modal.css') : time() ?>">
   <link rel="stylesheet" href="CSS/studio-ui.css?v=<?= file_exists(__DIR__ . '/CSS/studio-ui.css') ? filemtime(__DIR__ . '/CSS/studio-ui.css') : time() ?>">
   <script src="JS2/app-print-modal.js?v=<?= file_exists(__DIR__ . '/JS2/app-print-modal.js') ? filemtime(__DIR__ . '/JS2/app-print-modal.js') : time() ?>"></script>
@@ -3791,7 +3792,8 @@ if ($recordType === 'nameplate') {
     <!-- Row 2: Horizontal Navigation Tabs Bar (Full Width Row) -->
     <div class="studio-nav-bar">
       <a class="studio-nav-tab <?= ($menu === 'pcb') ? 'active' : '' ?>" href="view.php?menu=pcb">Print PCB Barcode</a>
-      <a class="studio-nav-tab <?= ($menu === 'ev_charger' || $menu === 'ev_charger_sn') ? 'active' : '' ?>" href="view.php?menu=ev_charger">EV Charge</a>
+      <a class="studio-nav-tab <?= ($menu === 'ev_charger') ? 'active' : '' ?>" href="view.php?menu=ev_charger">EV Charge</a>
+      <a class="studio-nav-tab <?= ($menu === 'ev_charger_sn') ? 'active' : '' ?>" href="view.php?menu=ev_charger_sn">Print SN EV Charge</a>
       <a class="studio-nav-tab <?= ($menu === 'nameplate') ? 'active' : '' ?>" href="view.php?menu=nameplate">Print Nameplate</a>
       <a class="studio-nav-tab <?= ($menu === 'record') ? 'active' : '' ?>" href="view.php?menu=record">Record Print</a>
       <a class="studio-nav-tab <?= ($menu === 'custom') ? 'active' : '' ?>" href="view.php?menu=custom">Custom Print</a>
@@ -3956,7 +3958,7 @@ if ($recordType === 'nameplate') {
                       ?>
                     </select>
                     <?php if (!$isEvChargerMenu): ?>
-                      <button type="submit" name="split" class="studio-btn studio-btn-split">Split</button>
+                      <button type="submit" name="split" id="btnSplitWo" class="studio-btn studio-btn-split">Split</button>
                     <?php endif; ?>
                     <button type="submit" name="finish" class="studio-btn studio-btn-finish" onclick="return confirm('Yakin hapus seluruh data WO ini?')">
                       <?= $isEvChargerMenu ? 'Hapus' : 'Finish' ?>
@@ -3971,6 +3973,41 @@ if ($recordType === 'nameplate') {
                   <p class="status-msg" style="font-size: 12px; margin-top: 6px;"><?= htmlspecialchars($msgFinish) ?></p>
                 <?php endif; ?>
               </form>
+              <?php if (!$isEvChargerMenu): ?>
+                <?php
+                $loadingId = 'splitLoadingScreen';
+                $loadingLabel = 'Memproses Split Nomor...';
+                $autoHideOnLoad = false;
+                $loadingHidden = true;
+                include __DIR__ . '/loading-swirling.php';
+                ?>
+                <script>
+                  (function () {
+                    var splitForm = document.getElementById("splitForm");
+                    var splitBtn = document.getElementById("btnSplitWo");
+                    var loader = document.getElementById("splitLoadingScreen");
+                    if (!splitForm || !splitBtn || !loader) return;
+
+                    var isSplitAction = false;
+                    splitBtn.addEventListener("click", function () {
+                      isSplitAction = true;
+                    });
+
+                    splitForm.addEventListener("submit", function (e) {
+                      var submitter = e.submitter || null;
+                      var triggeredBySplit = submitter ? (submitter === splitBtn || submitter.name === "split") : isSplitAction;
+                      if (triggeredBySplit) {
+                        loader.classList.remove("is-hidden");
+                      }
+                      isSplitAction = false;
+                    });
+
+                    window.addEventListener("pageshow", function () {
+                      loader.classList.add("is-hidden");
+                    });
+                  })();
+                </script>
+              <?php endif; ?>
 
               <!-- Row 2: Select Batch -->
               <div class="studio-form-group" style="margin-top: 12px; margin-bottom: 0;">
@@ -5036,114 +5073,149 @@ if ($recordType === 'nameplate') {
         $currentMonthNum = (int) date('n');
         $currentYear = (int) date('Y');
         ?>
-        <div class="topbar">
-          <h1>Print SN EV Charge</h1>
-          <p>Halaman untuk konfigurasi, generate, preview, dan cetak stiker Serial Number (SN) EV Charge dengan QR Code (Ukuran: 8cm x 2.8cm, Gap: 0.4cm).</p>
-        </div>
+        <div class="studio-grid-layout">
+          <!-- LEFT COLUMN: Card 1 (Konfigurasi Data SN) & Card 2 (Pengaturan Cetak & Label) -->
+          <div class="studio-col-left">
 
-        <div class="card">
-          <div class="step-title">
-            <span class="icon">1</span>
-            Konfigurasi Data Stiker Serial Number
-          </div>
-
-          <div style="display: flex; gap: 10px; margin-bottom: 16px; border-bottom: 1px solid var(--content-line); padding-bottom: 12px;">
-            <button type="button" id="tabBtnRange" class="primary" style="padding: 8px 16px; font-size: 13px;">Generate Range Otomatis</button>
-            <button type="button" id="tabBtnManual" style="padding: 8px 16px; font-size: 13px; background: var(--content-panel-soft); border: 1px solid var(--content-line-strong); color: var(--content-text); cursor: pointer; border-radius: 6px;">Input / Paste Manual</button>
-          </div>
-
-          <!-- Panel 1: Mode Range -->
-          <div id="panelRangeMode">
-            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 14px;">
-              <div>
-                <label style="font-size: 12px; margin-bottom: 4px; display: block;">Prefix Baris 1 (Model)</label>
-                <input type="text" id="snPrefix1" value="M06012EF" placeholder="M06012EF" style="margin-bottom: 0; font-family: monospace; font-weight: bold;">
+            <!-- CARD [1]: KONFIGURASI DATA SERIAL NUMBER -->
+            <div class="studio-card">
+              <div class="studio-card-title">
+                <span>[1] KONFIGURASI DATA SERIAL NUMBER</span>
               </div>
-              <div>
-                <label style="font-size: 12px; margin-bottom: 4px; display: block;">Prefix Baris 2 (Kode)</label>
-                <input type="text" id="snPrefix2" value="OHDE" placeholder="OHDE" style="margin-bottom: 0; font-family: monospace; font-weight: bold;">
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 14px;">
+                <button type="button" id="tabBtnRange" class="studio-btn" style="background: var(--studio-primary) !important; border-color: var(--studio-primary) !important; color: #ffffff !important;">Generate Range</button>
+                <button type="button" id="tabBtnManual" class="studio-btn">Input Manual</button>
               </div>
-              <div>
-                <label style="font-size: 12px; margin-bottom: 4px; display: block;">Nomor Awal</label>
-                <input type="number" id="snStartNum" value="5" min="0" placeholder="5" style="margin-bottom: 0;">
+
+              <!-- Panel 1: Mode Range -->
+              <div id="panelRangeMode">
+                <div class="studio-row-2col">
+                  <div class="studio-form-group">
+                    <label class="studio-label" for="snPrefix1">Prefix Baris 1 (Model)</label>
+                    <input type="text" id="snPrefix1" class="studio-input" value="M06012EF" placeholder="M06012EF" style="font-family: monospace; font-weight: bold;">
+                  </div>
+                  <div class="studio-form-group">
+                    <label class="studio-label" for="snPrefix2">Prefix Baris 2 (Kode)</label>
+                    <input type="text" id="snPrefix2" class="studio-input" value="OHDE" placeholder="OHDE" style="font-family: monospace; font-weight: bold;">
+                  </div>
+                </div>
+                <div class="studio-row-2col">
+                  <div class="studio-form-group">
+                    <label class="studio-label" for="snStartNum">Nomor Awal</label>
+                    <input type="number" id="snStartNum" class="studio-input" value="5" min="0" placeholder="5">
+                  </div>
+                  <div class="studio-form-group">
+                    <label class="studio-label" for="snEndNum">Nomor Akhir</label>
+                    <input type="number" id="snEndNum" class="studio-input" value="10" min="0" placeholder="10">
+                  </div>
+                </div>
+                <div class="studio-form-group">
+                  <label class="studio-label" for="snDigits">Panjang Digit Counter</label>
+                  <input type="number" id="snDigits" class="studio-input" value="4" min="1" max="10" placeholder="4">
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px;">
+                  <button type="button" id="btnApplyRange" class="studio-btn">&#8635; Terapkan Range</button>
+                  <button type="button" id="btnLoadExample" class="studio-btn">Contoh (0005, 0009, 0010)</button>
+                </div>
               </div>
-              <div>
-                <label style="font-size: 12px; margin-bottom: 4px; display: block;">Nomor Akhir</label>
-                <input type="number" id="snEndNum" value="10" min="0" placeholder="10" style="margin-bottom: 0;">
+
+              <!-- Panel 2: Mode Manual Textarea -->
+              <div id="panelManualMode" style="display: none;">
+                <div class="studio-form-group" style="margin-bottom: 6px;">
+                  <label class="studio-label" for="snManualTextarea">Daftar Serial Number (Satu per baris - paste dari Excel)</label>
+                  <textarea id="snManualTextarea" class="studio-input" rows="6" style="height: 150px !important; padding: 10px 12px !important; font-family: monospace; font-size: 13px; resize: vertical; line-height: 1.4;" placeholder="M06012EFOHDE0005&#10;M06012EFOHDE0009&#10;M06012EFOHDE0010">M06012EFOHDE0005&#10;M06012EFOHDE0009&#10;M06012EFOHDE0010</textarea>
+                </div>
+                <div style="font-size: 11px; color: var(--studio-text-muted); line-height: 1.4;">
+                  Otomatis dipecah 8 karakter baris pertama &amp; 8 karakter baris kedua jika 16 karakter tanpa spasi (atau pisah spasi: <code>M06012EF OHDE0005</code>).
+                </div>
               </div>
-              <div>
-                <label style="font-size: 12px; margin-bottom: 4px; display: block;">Panjang Digit Counter</label>
-                <input type="number" id="snDigits" value="4" min="1" max="10" placeholder="4" style="margin-bottom: 0;">
+            </div>
+
+            <!-- CARD [2]: PENGATURAN CETAK & FORMAT LABEL -->
+            <div class="studio-card">
+              <div class="studio-card-title">
+                <span>[2] PENGATURAN CETAK &amp; LABEL</span>
+              </div>
+
+              <div class="studio-row-2col">
+                <div class="studio-form-group">
+                  <label class="studio-label" for="snMonth">Bulan Produksi</label>
+                  <select id="snMonth" class="studio-select">
+                    <?php foreach ($indonesianMonths as $num => $name): ?>
+                      <option value="<?= $name ?>" <?= ($num === $currentMonthNum || $name === 'Agustus') ? ($name === 'Agustus' ? 'selected' : '') : '' ?>><?= $name ?></option>
+                    <?php endforeach; ?>
+                  </select>
+                </div>
+                <div class="studio-form-group">
+                  <label class="studio-label" for="snYear">Tahun Produksi</label>
+                  <input type="number" id="snYear" class="studio-input" value="<?= $currentYear ?>" min="2020" max="2050">
+                </div>
+              </div>
+
+              <div class="studio-row-2col">
+                <div class="studio-form-group">
+                  <label class="studio-label" for="snCopies">Jumlah Copy per SN</label>
+                  <input type="number" id="snCopies" class="studio-input" value="1" min="1" max="50">
+                </div>
+                <div class="studio-form-group">
+                  <label class="studio-label" for="snOffsetY">Geser Vertikal (mm)</label>
+                  <input type="number" id="snOffsetY" class="studio-input" value="5" step="0.5" min="-10" max="20" title="0.5 cm = 5 mm">
+                </div>
+              </div>
+
+              <div class="studio-form-group" style="margin-bottom: 0;">
+                <label class="studio-label" for="snPrinterMode">Mode Halaman Printer</label>
+                <select id="snPrinterMode" class="studio-select">
+                  <option value="gap_sensor">Thermal Roll (80 x 28 mm, Sensor Gap 4mm)</option>
+                  <option value="continuous">Continuous Feed (80 x 32 mm include Gap 4mm)</option>
+                </select>
               </div>
             </div>
-            <div style="display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap;">
-              <button type="button" id="btnApplyRange" style="font-size: 12px; padding: 6px 14px; border-radius: 6px; background: var(--content-button); color: #fff; border: none; cursor: pointer;">&#8635; Generate &amp; Terapkan Range</button>
-              <button type="button" id="btnLoadExample" style="font-size: 12px; padding: 6px 14px; border-radius: 6px; background: var(--content-panel-soft); border: 1px solid var(--content-line-strong); cursor: pointer; color: var(--content-text);">Muat Contoh Foto (0005, 0009, 0010)</button>
-            </div>
+
           </div>
 
-          <!-- Panel 2: Mode Manual Textarea -->
-          <div id="panelManualMode" style="display: none; margin-bottom: 14px;">
-            <label style="font-size: 12px; margin-bottom: 6px; display: block; font-weight: 500;">Daftar Serial Number (Satu per baris - bisa paste dari Excel):</label>
-            <textarea id="snManualTextarea" rows="6" style="width: 100%; border-radius: 8px; padding: 10px 12px; border: 1px solid var(--content-line-strong); font-family: monospace; font-size: 13px; background: var(--content-panel); color: var(--content-text); resize: vertical;" placeholder="M06012EFOHDE0005&#10;M06012EFOHDE0009&#10;M06012EFOHDE0010">M06012EFOHDE0005&#10;M06012EFOHDE0009&#10;M06012EFOHDE0010</textarea>
-            <div style="font-size: 11px; color: var(--content-muted); margin-top: 4px;">
-              Format otomatis: jika 16 karakter tanpa spasi, otomatis dipecah 8 karakter baris pertama &amp; 8 karakter baris kedua. Bisa juga dipisah spasi (misal: <code>M06012EF OHDE0005</code>).
-            </div>
-          </div>
+          <!-- RIGHT COLUMN: PREVIEW STIKER SN EV CHARGE & ACTIONS -->
+          <div class="studio-col-right">
+            <div class="studio-card studio-preview-card">
+              <div class="studio-preview-header">
+                <div class="studio-preview-title">PREVIEW STIKER SN EV CHARGE</div>
+                <div class="studio-preview-total" id="snSummaryBadge">
+                  Total: <span id="snCountLabel" style="color: var(--studio-accent-cyan); font-weight: 700;">6</span> Stiker SN (<span id="snSizeLabel">80mm x 28mm, Gap 4mm</span>)
+                </div>
+              </div>
 
-          <!-- Pengaturan Cetak & Format Label -->
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; padding: 14px; border-radius: 10px; background: var(--content-panel-soft); border: 1px solid var(--content-line-strong); margin-bottom: 16px;">
-            <div>
-              <label style="font-size: 12px; margin-bottom: 4px; display: block;">Bulan Produksi</label>
-              <select id="snMonth" style="margin-bottom: 0;">
-                <?php foreach ($indonesianMonths as $num => $name): ?>
-                  <option value="<?= $name ?>" <?= ($num === $currentMonthNum || $name === 'Agustus') ? ($name === 'Agustus' ? 'selected' : '') : '' ?>><?= $name ?></option>
-                <?php endforeach; ?>
-              </select>
-            </div>
-            <div>
-              <label style="font-size: 12px; margin-bottom: 4px; display: block;">Tahun Produksi</label>
-              <input type="number" id="snYear" value="<?= $currentYear ?>" min="2020" max="2050" style="margin-bottom: 0;">
-            </div>
-            <div>
-              <label style="font-size: 12px; margin-bottom: 4px; display: block;">Jumlah Copy per SN</label>
-              <input type="number" id="snCopies" value="1" min="1" max="50" style="margin-bottom: 0;">
-            </div>
-            <div>
-              <label style="font-size: 12px; margin-bottom: 4px; display: block;">Geser Vertikal (mm)</label>
-              <input type="number" id="snOffsetY" value="5" step="0.5" min="-10" max="20" style="margin-bottom: 0;" title="0.5 cm = 5 mm">
-            </div>
-            <div>
-              <label style="font-size: 12px; margin-bottom: 4px; display: block;">Mode Halaman Printer</label>
-              <select id="snPrinterMode" style="margin-bottom: 0;">
-                <option value="gap_sensor">Thermal Roll (80 x 28 mm, Sensor Gap 4mm)</option>
-                <option value="continuous">Continuous Feed (80 x 32 mm include Gap 4mm)</option>
-              </select>
-            </div>
-          </div>
+              <!-- Scrollable Canvas -->
+              <div class="studio-preview-canvas" id="snPreviewScrollArea" style="display: flex; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 14px; padding: 20px !important;">
+                <!-- Stickers are dynamically injected here -->
+              </div>
 
-          <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
-            <button type="button" id="btnPrintSn" class="primary" style="font-size: 15px; padding: 12px 24px; font-weight: 600;">
-              &#128438; Print Stiker SN EV Charge
-            </button>
-            <div id="snSummaryBadge" style="font-size: 13px; font-weight: 600; color: var(--content-text);">
-              Total: <span id="snCountLabel" style="color: #3b82f6;">3</span> Stiker SN (<span id="snSizeLabel">80mm x 28mm, Gap 4mm</span>)
+              <!-- Info Strip -->
+              <div class="studio-custom-text-box" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;">
+                <span style="font-size: 12px; color: var(--studio-text-muted);">
+                  Ukuran fisik stiker: <strong style="color: var(--studio-text);">8cm x 2.8cm</strong> &bull; Gap antar stiker: <strong style="color: var(--studio-text);">0.4cm</strong>
+                </span>
+                <span style="font-size: 11.5px; color: var(--studio-accent-cyan); font-weight: 600;">
+                  QR Code + Serial Number (Siap Cetak)
+                </span>
+              </div>
+
+              <!-- Bottom Actions Bar -->
+              <div class="studio-preview-actions">
+                <button type="button" id="btnStudioPrintNow" class="studio-btn-execute">
+                  CETAK SEKARANG [Enter]
+                </button>
+                <button type="button" id="btnSnReset" class="studio-btn-action">
+                  Reset
+                </button>
+                <button type="button" id="btnStudioPrinterSettings" class="studio-btn-action">
+                  Pengaturan Printer [F12]
+                </button>
+              </div>
+
+              <!-- Hidden trigger button for studio-ui.js Enter shortcut -->
+              <button type="button" id="printBtn" style="display: none;">Print</button>
             </div>
-          </div>
-        </div>
-
-        <!-- Card 2: Live Preview -->
-        <div class="card">
-          <div class="step-title">
-            <span class="icon">2</span>
-            Live Preview Stiker SN EV Charge
-          </div>
-          <p style="margin-top: 0; margin-bottom: 12px; font-size: 13px; color: var(--content-muted);">
-            Tampilan persis sesuai stiker fisik yang akan dicetak (Ukuran stiker: <strong>8cm x 2.8cm</strong>, gap antar stiker: <strong>0.4cm</strong>).
-          </p>
-
-          <div id="snPreviewScrollArea" style="background: #374151; padding: 24px; border-radius: 12px; overflow-x: auto; display: flex; flex-direction: column; align-items: center; gap: 4mm; min-height: 200px; box-shadow: inset 0 2px 8px rgba(0,0,0,0.3);">
-            <!-- Stickers are dynamically injected here -->
           </div>
         </div>
       <?php elseif ($menu === 'setting'): ?>
@@ -7208,7 +7280,9 @@ if ($recordType === 'nameplate') {
       var snCopies = document.getElementById("snCopies");
       var snOffsetY = document.getElementById("snOffsetY");
       var snPrinterMode = document.getElementById("snPrinterMode");
-      var btnPrintSn = document.getElementById("btnPrintSn");
+      var btnPrintSn = document.getElementById("printBtn");
+      var btnSnReset = document.getElementById("btnSnReset");
+      var snSizeLabel = document.getElementById("snSizeLabel");
 
       var snPreviewScrollArea = document.getElementById("snPreviewScrollArea");
       var snCountLabel = document.getElementById("snCountLabel");
@@ -7219,35 +7293,53 @@ if ($recordType === 'nameplate') {
 
       var currentMode = "range";
 
+      function setModeTabActive(mode) {
+        currentMode = mode;
+        var isRange = (mode === "range");
+        if (tabBtnRange) {
+          tabBtnRange.style.cssText = isRange
+            ? "background: var(--studio-primary) !important; border-color: var(--studio-primary) !important; color: #ffffff !important;"
+            : "";
+        }
+        if (tabBtnManual) {
+          tabBtnManual.style.cssText = !isRange
+            ? "background: var(--studio-primary) !important; border-color: var(--studio-primary) !important; color: #ffffff !important;"
+            : "";
+        }
+        if (panelRange) panelRange.style.display = isRange ? "block" : "none";
+        if (panelManual) panelManual.style.display = !isRange ? "block" : "none";
+        updateSnPreview();
+      }
+
       if (tabBtnRange && tabBtnManual) {
         tabBtnRange.addEventListener("click", function () {
-          currentMode = "range";
-          tabBtnRange.className = "primary";
-          tabBtnRange.style.background = "";
-          tabBtnRange.style.border = "";
-          tabBtnRange.style.color = "";
-          tabBtnManual.className = "";
-          tabBtnManual.style.background = "var(--content-panel-soft)";
-          tabBtnManual.style.border = "1px solid var(--content-line-strong)";
-          tabBtnManual.style.color = "var(--content-text)";
-          if (panelRange) panelRange.style.display = "block";
-          if (panelManual) panelManual.style.display = "none";
-          updateSnPreview();
+          setModeTabActive("range");
         });
 
         tabBtnManual.addEventListener("click", function () {
-          currentMode = "manual";
-          tabBtnManual.className = "primary";
-          tabBtnManual.style.background = "";
-          tabBtnManual.style.border = "";
-          tabBtnManual.style.color = "";
-          tabBtnRange.className = "";
-          tabBtnRange.style.background = "var(--content-panel-soft)";
-          tabBtnRange.style.border = "1px solid var(--content-line-strong)";
-          tabBtnRange.style.color = "var(--content-text)";
-          if (panelRange) panelRange.style.display = "none";
-          if (panelManual) panelManual.style.display = "block";
-          updateSnPreview();
+          setModeTabActive("manual");
+        });
+      }
+
+      if (snPrinterMode && snSizeLabel) {
+        snPrinterMode.addEventListener("change", function () {
+          snSizeLabel.textContent = (snPrinterMode.value === "continuous")
+            ? "80mm x 32mm include Gap 4mm"
+            : "80mm x 28mm, Gap 4mm";
+        });
+      }
+
+      if (btnSnReset) {
+        btnSnReset.addEventListener("click", function () {
+          if (snPrefix1) snPrefix1.value = "M06012EF";
+          if (snPrefix2) snPrefix2.value = "OHDE";
+          if (snStartNum) snStartNum.value = "5";
+          if (snEndNum) snEndNum.value = "10";
+          if (snDigits) snDigits.value = "4";
+          if (snCopies) snCopies.value = "1";
+          if (snOffsetY) snOffsetY.value = "5";
+          if (snManualTextarea) snManualTextarea.value = "M06012EFOHDE0005\nM06012EFOHDE0009\nM06012EFOHDE0010";
+          setModeTabActive("range");
         });
       }
 
@@ -7447,14 +7539,14 @@ if ($recordType === 'nameplate') {
         w.document.write('<style>');
         w.document.write('@page { size: 80mm ' + pageHeight + '; margin: 0; }');
         w.document.write('* { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }');
-        w.document.write('html, body { margin: 0; padding: 0; background: #fff; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; }');
-        w.document.write('@media screen { body { background: #55657c; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 4mm; } .ev-sn-sticker { box-shadow: 0 4px 12px rgba(0,0,0,0.3); } .screen-btn-bar { position: fixed; top: 12px; right: 12px; z-index: 999; } .screen-btn { background: #2563eb; color: #fff; border: none; padding: 10px 20px; font-size: 14px; font-weight: bold; border-radius: 6px; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.25); } }');
+
+
         w.document.write('@media print { body { background: #fff !important; width: 80mm; } .ev-sn-sticker { page-break-after: always; break-after: page; box-shadow: none !important; border: none !important; } .screen-btn-bar { display: none !important; } }');
-        w.document.write('.ev-sn-sticker { width: 80mm; height: 28mm; background: #ffffff; padding: 0 3.2mm; display: flex; flex-direction: row; align-items: flex-start; overflow: hidden; box-sizing: border-box; }');
+        w.document.write('.ev-sn-sticker { width: 80mm; height: 28mm; background: #ffffff; color: #000000; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; padding: 0 3.2mm; display: flex; flex-direction: row; align-items: flex-start; overflow: hidden; box-sizing: border-box; }');
         w.document.write('.ev-sn-content-row { display: flex; flex-direction: row; align-items: center; width: 100%; height: 21mm; margin-top: ' + offsetY + 'mm; }');
         w.document.write('.ev-sn-qr { width: 20mm; height: 20mm; flex-shrink: 0; display: flex; align-items: center; justify-content: center; }');
         w.document.write('.ev-sn-qr svg { width: 100%; height: 100%; display: block; }');
-        w.document.write('.ev-sn-info { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: space-between; padding-left: 3.5mm; overflow: hidden; box-sizing: border-box; }');
+        w.document.write('.ev-sn-info { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: space-between; padding-left: 3.5mm; overflow: hidden; box-sizing: border-box; text-align: left; }');
         w.document.write('.ev-sn-title { font-size: 8pt; font-weight: 700; color: #111; line-height: 1; margin: 0; }');
         w.document.write('.ev-sn-code-box { display: flex; flex-direction: column; justify-content: center; line-height: 0.92; margin: 0.4mm 0; }');
         w.document.write('.ev-sn-code-line { font-family: Arial, "Arial Black", sans-serif; font-size: 18pt; font-weight: 900; color: #000; letter-spacing: 0.025em; white-space: nowrap; }');
@@ -7486,7 +7578,7 @@ if ($recordType === 'nameplate') {
         w.document.write('<script src="JS2/qrcode-generator.min.js"><\/script>');
         w.document.write('<script src="JS2/qrcode-offline.js"><\/script>');
         w.document.write('<script>');
-        w.document.write('if (window.opener && window.opener.QRCodeRuntime) { window.opener.QRCodeRuntime.renderAll(document, ".np-qr[data-qr]"); }');
+        w.document.write('if (window.QRCodeRuntime && typeof window.QRCodeRuntime.renderAll === "function") { window.QRCodeRuntime.renderAll(document, ".np-qr[data-qr]"); } else if (window.opener && window.opener.QRCodeRuntime) { window.opener.QRCodeRuntime.renderAll(document, ".np-qr[data-qr]"); }');
         w.document.write('setTimeout(function() { window.print(); }, 250);');
         w.document.write('<\/script>');
         w.document.write('</body></html>');

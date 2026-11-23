@@ -87,6 +87,8 @@ $essentialFiles = [
     'mode_select.php',
     'export_record_excel.php',
     'export_record_modal.php',
+    'loading-swirling.css',
+    'loading-swirling.php',
     'Login1.php',
     'Logout1.php',
     'Register1.php',
