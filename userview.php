@@ -1249,6 +1249,7 @@ if ($menu === 'record') {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PCB Barcode Print Generator</title>
+  <link rel="stylesheet" href="loading-swirling.css?v=<?= file_exists(__DIR__ . '/loading-swirling.css') ? filemtime(__DIR__ . '/loading-swirling.css') : time() ?>">
   <link rel="stylesheet" href="CSS/app-print-modal.css?v=<?= file_exists(__DIR__ . '/CSS/app-print-modal.css') ? filemtime(__DIR__ . '/CSS/app-print-modal.css') : time() ?>">
   <link rel="stylesheet" href="CSS/studio-ui.css?v=<?= file_exists(__DIR__ . '/CSS/studio-ui.css') ? filemtime(__DIR__ . '/CSS/studio-ui.css') : time() ?>">
   <script src="JS2/app-print-modal.js?v=<?= file_exists(__DIR__ . '/JS2/app-print-modal.js') ? filemtime(__DIR__ . '/JS2/app-print-modal.js') : time() ?>"></script>
@@ -2897,6 +2898,27 @@ if ($menu === 'record') {
   </style>
 </head>
 <body>
+  <?php
+  $isPendingPrintPreview = !empty($printScript) || !empty($nameplatePrintScript);
+  $loadingId = 'appGlobalLoadingScreen';
+  $loadingLabel = $isPendingPrintPreview ? 'Menyiapkan pratinjau cetak...' : 'Memuat...';
+  $autoHideOnLoad = false;
+  $loadingHidden = !$isPendingPrintPreview;
+  $loadingDataPendingPrint = $isPendingPrintPreview;
+  include __DIR__ . '/loading-swirling.php';
+  ?>
+  <script>
+    (function () {
+      var el = document.getElementById("appGlobalLoadingScreen");
+      if (!el) return;
+      try {
+        var pending = sessionStorage.getItem("app_pending_swirl_loading");
+        if (pending === "batch" || pending === "print") {
+          el.classList.remove("is-hidden");
+        }
+      } catch (e) {}
+    })();
+  </script>
   <header class="studio-header">
     <!-- Row 1: Brand & Printer status -->
     <div class="studio-header-top">
@@ -3348,6 +3370,9 @@ if ($menu === 'record') {
               if (recordModal) {
                 recordModal.style.display = "block";
               } else {
+                if (typeof window.showAppLoadingScreen === "function") {
+                  window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                }
                 printForm.submit();
               }
             }
@@ -3363,6 +3388,9 @@ if ($menu === 'record') {
               yesBtn.addEventListener("click", function () {
                 recordField.value = "1";
                 recordModal.style.display = "none";
+                if (typeof window.showAppLoadingScreen === "function") {
+                  window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                }
                 printForm.submit();
               });
             }
@@ -3370,6 +3398,9 @@ if ($menu === 'record') {
               noBtn.addEventListener("click", function () {
                 recordField.value = "0";
                 recordModal.style.display = "none";
+                if (typeof window.showAppLoadingScreen === "function") {
+                  window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                }
                 printForm.submit();
               });
             }
@@ -3535,6 +3566,10 @@ if ($menu === 'record') {
 
                     yesBtn.addEventListener("click", function () {
                       recordField.value = "1";
+                      modal.style.display = "none";
+                      if (typeof window.showAppLoadingScreen === "function") {
+                        window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                      }
                       form.dataset.confirmed = "1";
                       form.submit();
                     });
@@ -3545,6 +3580,10 @@ if ($menu === 'record') {
                         return;
                       }
                       recordField.value = "0";
+                      modal.style.display = "none";
+                      if (typeof window.showAppLoadingScreen === "function") {
+                        window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                      }
                       form.dataset.confirmed = "1";
                       form.submit();
                     });

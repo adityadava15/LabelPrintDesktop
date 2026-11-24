@@ -6,6 +6,33 @@
 (function (global) {
   "use strict";
 
+  var LOADING_STORAGE_KEY = "app_pending_swirl_loading";
+
+  function showAppLoadingScreen(label, persistType) {
+    if (persistType) {
+      try {
+        sessionStorage.setItem(LOADING_STORAGE_KEY, String(persistType));
+      } catch (e) {}
+    }
+    var el = document.getElementById("appGlobalLoadingScreen");
+    if (el) {
+      if (label) {
+        el.setAttribute("aria-label", String(label));
+      }
+      el.classList.remove("is-hidden");
+    }
+  }
+
+  function hideAppLoadingScreen() {
+    try {
+      sessionStorage.removeItem(LOADING_STORAGE_KEY);
+    } catch (e) {}
+    var el = document.getElementById("appGlobalLoadingScreen");
+    if (el) {
+      el.classList.add("is-hidden");
+    }
+  }
+
   function isSamePrinter(a, b) {
     if (!a || !b) return false;
     return String(a).trim().toLowerCase() === String(b).trim().toLowerCase();
@@ -196,6 +223,7 @@
     if (batchSelect) {
       batchSelect.addEventListener("change", function () {
         var val = this.value;
+        showAppLoadingScreen("Memuat data batch...", "batch");
         var currentUrl = new URL(window.location.href);
         if (val) {
           currentUrl.searchParams.set("batch_id", val);
@@ -203,6 +231,13 @@
           currentUrl.searchParams.delete("batch_id");
         }
         window.location.href = currentUrl.toString();
+      });
+    }
+
+    var npBatchSelect = document.querySelector('select[name="batch_id_np"]');
+    if (npBatchSelect) {
+      npBatchSelect.addEventListener("change", function () {
+        showAppLoadingScreen("Memuat data batch nameplate...", "batch");
       });
     }
   }
@@ -218,8 +253,34 @@
     }
   }
 
+  global.showAppLoadingScreen = showAppLoadingScreen;
+  global.hideAppLoadingScreen = hideAppLoadingScreen;
   global.updateStudioPrinterStatus = updateStudioPrinterStatus;
   global.openPrinterStudioSettings = openPrinterStudioSettings;
+
+  window.addEventListener("load", function () {
+    var el = document.getElementById("appGlobalLoadingScreen");
+    if (!el) return;
+    var isPendingPrint = el.getAttribute("data-pending-print") === "1";
+    if (isPendingPrint) {
+      setTimeout(function () {
+        var modalOverlay = document.getElementById("appPrintModalOverlay");
+        if (!modalOverlay || !modalOverlay.classList.contains("is-open")) {
+          hideAppLoadingScreen();
+        }
+      }, 4000);
+      return;
+    }
+    setTimeout(function () {
+      requestAnimationFrame(hideAppLoadingScreen);
+    }, 80);
+  });
+
+  window.addEventListener("pageshow", function (event) {
+    if (event.persisted) {
+      hideAppLoadingScreen();
+    }
+  });
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initStudioEvents);

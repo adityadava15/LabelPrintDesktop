@@ -3766,6 +3766,27 @@ if ($recordType === 'nameplate') {
   </style>
 </head>
 <body>
+  <?php
+  $isPendingPrintPreview = !empty($printScript) || !empty($nameplatePrintScript);
+  $loadingId = 'appGlobalLoadingScreen';
+  $loadingLabel = $isPendingPrintPreview ? 'Menyiapkan pratinjau cetak...' : 'Memuat...';
+  $autoHideOnLoad = false;
+  $loadingHidden = !$isPendingPrintPreview;
+  $loadingDataPendingPrint = $isPendingPrintPreview;
+  include __DIR__ . '/loading-swirling.php';
+  ?>
+  <script>
+    (function () {
+      var el = document.getElementById("appGlobalLoadingScreen");
+      if (!el) return;
+      try {
+        var pending = sessionStorage.getItem("app_pending_swirl_loading");
+        if (pending === "batch" || pending === "print") {
+          el.classList.remove("is-hidden");
+        }
+      } catch (e) {}
+    })();
+  </script>
   <header class="studio-header">
     <!-- Row 1: Brand & Printer status -->
     <div class="studio-header-top">
@@ -4448,6 +4469,9 @@ if ($recordType === 'nameplate') {
               if (recordModal) {
                 recordModal.style.display = "block";
               } else {
+                if (typeof window.showAppLoadingScreen === "function") {
+                  window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                }
                 printForm.submit();
               }
             }
@@ -4463,6 +4487,9 @@ if ($recordType === 'nameplate') {
               yesBtn.addEventListener("click", function () {
                 recordField.value = "1";
                 recordModal.style.display = "none";
+                if (typeof window.showAppLoadingScreen === "function") {
+                  window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                }
                 printForm.submit();
               });
             }
@@ -4470,6 +4497,9 @@ if ($recordType === 'nameplate') {
               noBtn.addEventListener("click", function () {
                 recordField.value = "0";
                 recordModal.style.display = "none";
+                if (typeof window.showAppLoadingScreen === "function") {
+                  window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+                }
                 printForm.submit();
               });
             }
@@ -4687,6 +4717,10 @@ if ($recordType === 'nameplate') {
 	                    yesBtn.addEventListener("click", function () {
 	                      var isRecorded = form.dataset.isRecorded === "1";
 	                      recordField.value = isRecorded ? "0" : "1";
+	                      modal.style.display = "none";
+	                      if (typeof window.showAppLoadingScreen === "function") {
+	                        window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+	                      }
 	                      form.dataset.confirmed = "1";
 	                      form.submit();
 	                    });
@@ -4698,6 +4732,10 @@ if ($recordType === 'nameplate') {
 	                        return;
 	                      }
 	                      recordField.value = "0";
+	                      modal.style.display = "none";
+	                      if (typeof window.showAppLoadingScreen === "function") {
+	                        window.showAppLoadingScreen("Menyiapkan pratinjau cetak...", "print");
+	                      }
 	                      form.dataset.confirmed = "1";
 	                      form.submit();
 	                    });

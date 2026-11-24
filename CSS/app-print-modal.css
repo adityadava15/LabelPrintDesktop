@@ -451,7 +451,7 @@
 .app-print-pages-container {
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 24px;
   align-items: center;
   transform-origin: top center;
   transition: transform 0.15s ease-out;
@@ -459,14 +459,13 @@
 
 /* Paper Cards */
 .app-print-sheet-card {
-  background: #ffffff;
-  color: #000000;
-  border-radius: 4px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
   position: relative;
   transition: transform 0.2s;
   box-sizing: border-box;
-  overflow: hidden;
 }
 
 .app-print-sheet-card.is-hidden {
@@ -474,19 +473,50 @@
 }
 
 .app-print-sheet-card-header {
-  position: absolute;
-  top: -24px;
-  left: 0;
-  right: 0;
+  width: 100%;
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
   font-weight: 600;
+  color: #cbd5e1;
+  line-height: 1.25;
+  user-select: none;
+}
+
+.app-print-sheet-page-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(30, 41, 59, 0.92);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: #e2e8f0;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.app-print-sheet-page-num {
+  color: #60a5fa;
+}
+
+.app-print-sheet-meta {
+  font-size: 11px;
+  font-weight: 500;
   color: #94a3b8;
+  white-space: nowrap;
 }
 
 .app-print-sheet-paper {
   background: #ffffff;
+  color: #000000;
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.4);
   box-sizing: border-box;
   position: relative;
   overflow: hidden;

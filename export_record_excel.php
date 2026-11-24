@@ -349,36 +349,13 @@ if ($action === 'download_excel') {
       xmlns="http://www.w3.org/TR/REC-html40">
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-<!--[if gte mso 9]>
-<xml>
- <x:ExcelWorkbook>
-  <x:ExcelWorksheets>
-   <x:ExcelWorksheet>
-    <x:Name><?= htmlspecialchars($batchHeaderRight) ?></x:Name>
-    <x:WorksheetOptions>
-     <x:DisplayGridlines/>
-     <x:PageSetup>
-      <x:Layout x:Orientation="Landscape"/>
-      <x:PageMargins x:Top="0.5" x:Bottom="0.5" x:Left="0.5" x:Right="0.5"/>
-     </x:PageSetup>
-     <x:Print>
-      <x:ValidPrinterInfo/>
-      <x:PaperSizeIndex>9</x:PaperSizeIndex>
-      <x:Scale>100</x:Scale>
-      <x:HorizontalResolution>600</x:HorizontalResolution>
-      <x:VerticalResolution>600</x:VerticalResolution>
-     </x:Print>
-    </x:WorksheetOptions>
-   </x:ExcelWorksheet>
-  </x:ExcelWorksheets>
- </x:ExcelWorkbook>
-</xml>
-<![endif]-->
 <style>
   @page {
-    mso-page-orientation: landscape;
-    size: landscape;
     margin: 0.5in 0.5in 0.5in 0.5in;
+    mso-header-margin: 0.3in;
+    mso-footer-margin: 0.3in;
+    mso-page-orientation: landscape;
+    mso-horizontal-page-align: center;
   }
   body, table {
     font-family: Arial, Calibri, sans-serif;
@@ -421,37 +398,53 @@ if ($action === 'download_excel') {
     font-family: Arial, Calibri, sans-serif;
   }
 
-  /* Baris Data: Border Tipis (0.5pt solid black) */
+  /* Baris Data: Border Tipis (0.5pt solid black), Center-Middle */
   .td-data {
     border-top: 0.5pt solid #000000;
     border-bottom: 0.5pt solid #000000;
     border-left: 0.5pt solid #000000;
     border-right: 0.5pt solid #000000;
+    text-align: center;
     vertical-align: middle;
     padding: 3px 6px;
     font-size: 10pt;
     font-family: Arial, Calibri, sans-serif;
-  }
-  .td-border-left-thick {
-    border-left: 1.5pt solid #000000 !important;
-  }
-  .td-border-right-thick {
-    border-right: 1.5pt solid #000000 !important;
-  }
-
-  /* Alignment Kolom */
-  .align-right {
-    text-align: right !important;
-  }
-  .align-center {
-    text-align: center !important;
-  }
-
-  /* Format Data */
-  .text-format {
     mso-number-format: "\@";
   }
-  .qty-format {
+  .td-data-left {
+    border-top: 0.5pt solid #000000;
+    border-bottom: 0.5pt solid #000000;
+    border-left: 1.5pt solid #000000;
+    border-right: 0.5pt solid #000000;
+    text-align: center;
+    vertical-align: middle;
+    padding: 3px 6px;
+    font-size: 10pt;
+    font-family: Arial, Calibri, sans-serif;
+    mso-number-format: "\@";
+  }
+  .td-data-right {
+    border-top: 0.5pt solid #000000;
+    border-bottom: 0.5pt solid #000000;
+    border-left: 0.5pt solid #000000;
+    border-right: 1.5pt solid #000000;
+    text-align: center;
+    vertical-align: middle;
+    padding: 3px 6px;
+    font-size: 10pt;
+    font-family: Arial, Calibri, sans-serif;
+    mso-number-format: "\@";
+  }
+  .td-data-qty {
+    border-top: 0.5pt solid #000000;
+    border-bottom: 0.5pt solid #000000;
+    border-left: 0.5pt solid #000000;
+    border-right: 0.5pt solid #000000;
+    text-align: center;
+    vertical-align: middle;
+    padding: 3px 6px;
+    font-size: 10pt;
+    font-family: Arial, Calibri, sans-serif;
     mso-number-format: "#,##0";
   }
 
@@ -496,6 +489,29 @@ if ($action === 'download_excel') {
     font-family: Arial, Calibri, sans-serif;
   }
 </style>
+<!--[if gte mso 9]>
+<xml>
+ <x:ExcelWorkbook>
+  <x:ExcelWorksheets>
+   <x:ExcelWorksheet>
+    <x:Name><?= htmlspecialchars($batchHeaderRight) ?></x:Name>
+    <x:WorksheetOptions>
+     <x:DisplayGridlines/>
+     <x:FitToPage/>
+     <x:Print>
+      <x:FitWidth>1</x:FitWidth>
+      <x:FitHeight>0</x:FitHeight>
+      <x:ValidPrinterInfo/>
+      <x:PaperSizeIndex>9</x:PaperSizeIndex>
+      <x:HorizontalResolution>600</x:HorizontalResolution>
+      <x:VerticalResolution>600</x:VerticalResolution>
+     </x:Print>
+    </x:WorksheetOptions>
+   </x:ExcelWorksheet>
+  </x:ExcelWorksheets>
+ </x:ExcelWorkbook>
+</xml>
+<![endif]-->
 </head>
 <body>
 <table>
@@ -537,15 +553,15 @@ if ($action === 'download_excel') {
       $totalQty += $qty;
   ?>
   <tr style="height: 22px;">
-    <td class="td-data td-border-left-thick align-right text-format"><?= $rowNum++ ?></td>
-    <td class="td-data align-right text-format"><?= htmlspecialchars((string)($r['no_awal'] ?? '')) ?></td>
-    <td class="td-data align-right text-format"><?= htmlspecialchars((string)($r['no_akhir'] ?? '')) ?></td>
-    <td class="td-data align-right qty-format"><?= $qty ?></td>
-    <td class="td-data align-center text-format"><?= htmlspecialchars((string)($r['tanggal'] ?? '')) ?></td>
-    <td class="td-data align-center text-format"><?= htmlspecialchars((string)($r['status_print'] ?? '')) ?></td>
-    <td class="td-data align-center text-format"><?= htmlspecialchars((string)($r['qc_check_date'] ?? '')) ?></td>
-    <td class="td-data align-center text-format"><?= htmlspecialchars((string)($r['qc_check'] ?? '')) ?></td>
-    <td class="td-data td-border-right-thick align-center text-format"><?= htmlspecialchars((string)($r['mark'] ?? '')) ?></td>
+    <td class="td-data-left" align="center" valign="middle"><?= $rowNum++ ?></td>
+    <td class="td-data" align="center" valign="middle"><?= htmlspecialchars((string)($r['no_awal'] ?? '')) ?></td>
+    <td class="td-data" align="center" valign="middle"><?= htmlspecialchars((string)($r['no_akhir'] ?? '')) ?></td>
+    <td class="td-data-qty" align="center" valign="middle"><?= $qty ?></td>
+    <td class="td-data" align="center" valign="middle"><?= htmlspecialchars((string)($r['tanggal'] ?? '')) ?></td>
+    <td class="td-data" align="center" valign="middle"><?= htmlspecialchars((string)($r['status_print'] ?? '')) ?></td>
+    <td class="td-data" align="center" valign="middle"><?= htmlspecialchars((string)($r['qc_check_date'] ?? '')) ?></td>
+    <td class="td-data" align="center" valign="middle"><?= htmlspecialchars((string)($r['qc_check'] ?? '')) ?></td>
+    <td class="td-data-right" align="center" valign="middle"><?= htmlspecialchars((string)($r['mark'] ?? '')) ?></td>
   </tr>
   <?php endforeach; ?>
 

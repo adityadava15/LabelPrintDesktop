@@ -12,6 +12,7 @@ $loadingLabel = $loadingLabel ?? 'Memuat...';
 $loadingId = $loadingId ?? 'loadingScreen';
 $autoHideOnLoad = $autoHideOnLoad ?? false;
 $loadingHidden = $loadingHidden ?? false;
+$loadingDataPendingPrint = $loadingDataPendingPrint ?? false;
 ?>
 <?php if (!$isIncluded): ?>
 <!DOCTYPE html>
@@ -30,7 +31,7 @@ $loadingHidden = $loadingHidden ?? false;
     class="loading-screen-overlay<?= $loadingHidden ? ' is-hidden' : '' ?>"
     role="status"
     aria-live="polite"
-    aria-label="<?= htmlspecialchars($loadingLabel, ENT_QUOTES, 'UTF-8') ?>"
+    aria-label="<?= htmlspecialchars($loadingLabel, ENT_QUOTES, 'UTF-8') ?>"<?= $loadingDataPendingPrint ? ' data-pending-print="1"' : '' ?>
   >
     <svg
       class="swirling-loader"

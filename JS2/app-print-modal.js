@@ -577,6 +577,21 @@
     return hiddenIframe;
   }
 
+  function countSheetLabels(paperEl) {
+    if (!paperEl) return 0;
+    var nodes = paperEl.querySelectorAll("td.label, .sticker, .ev-sn-sticker, .barcode-box, .np-card");
+    var count = 0;
+    for (var i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (node.classList && node.classList.contains("ev-sn-sticker")) {
+        count++;
+      } else if (node.children.length > 0 || (node.textContent && node.textContent.trim() !== "")) {
+        count++;
+      }
+    }
+    return count;
+  }
+
   var AppPrinter = {
     open: function (config) {
       createModalDOM();
@@ -631,13 +646,20 @@
         var card = document.createElement("div");
         card.className = "app-print-sheet-card";
 
-        var header = document.createElement("div");
-        header.className = "app-print-sheet-card-header";
-        header.innerHTML = "<span>Halaman " + (i + 1) + " dari " + allSheets.length + "</span><span>" + (currentConfig.badge || "") + "</span>";
-
         var paper = document.createElement("div");
         paper.className = "app-print-sheet-paper";
         paper.innerHTML = allSheets[i];
+
+        var labelCountOnSheet = countSheetLabels(paper);
+        var metaText = currentConfig.badge
+          ? String(currentConfig.badge)
+          : (labelCountOnSheet > 0 ? (labelCountOnSheet + " label") : "");
+
+        var header = document.createElement("div");
+        header.className = "app-print-sheet-card-header";
+        header.innerHTML =
+          '<span class="app-print-sheet-page-badge">Halaman <span class="app-print-sheet-page-num">' + (i + 1) + '</span> dari ' + allSheets.length + '</span>' +
+          (metaText ? '<span class="app-print-sheet-meta">' + escapeHtmlStr(metaText) + '</span>' : '');
 
         card.appendChild(header);
         card.appendChild(paper);
@@ -675,6 +697,14 @@
       // Show Modal
       overlayEl.classList.add("is-open");
       document.body.style.overflow = "hidden";
+
+      if (typeof global.hideAppLoadingScreen === "function") {
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            global.hideAppLoadingScreen();
+          });
+        });
+      }
     },
 
     openHtml: function (fullHtml, title) {
@@ -1446,9 +1476,12 @@
             writeln: function (s) { buffer += s + "\n"; },
             open: function () { buffer = ""; },
             close: function () {
+              if (typeof global.showAppLoadingScreen === "function") {
+                global.showAppLoadingScreen("Menyiapkan pratinjau cetak...");
+              }
               setTimeout(function () {
                 AppPrinter.openHtml(buffer);
-              }, 20);
+              }, 35);
             }
           },
           focus: function () {},
